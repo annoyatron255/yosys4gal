@@ -7,11 +7,10 @@
 //! blocks in the chip. Then those blocks can be converted into fuse slices
 //! at various offsets and applied to the fuse map using `setSlice()`
 //! Then the write_jed method takes that fuse map and outputs a valid JED file.
-//!
-//!
 
 const std = @import("std");
 const builtin = @import("builtin");
+const meta = @import("meta.zig");
 
 fn bool2char(val: bool) u8 {
     return if (val) '1' else '0';
@@ -56,9 +55,9 @@ fn file_checksum(data: []const u8) u16 {
 }
 
 const jedHeader = std.fmt.comptimePrint(
-    \\GAL Assembler: mkjed
+    \\GAL Assembler: mkjed {s}
     \\Zig version: {s}
-, .{builtin.zig_version_string});
+, .{ meta.version, builtin.zig_version_string });
 
 /// options for the JED serialization
 pub const jedOptions = struct {
@@ -225,7 +224,7 @@ test "jed file" {
         \\QP20*
         \\L0 10000000000000000000000000000000*
         \\C0001*
-        \\{c}1d7e
+        \\{c}1e8a
     , .{ 0x02, jedHeader, 0x03 });
     const alloc = std.testing.allocator;
     var fmap = try FuseMap.init(alloc, 64, 20, false);
