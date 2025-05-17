@@ -132,10 +132,10 @@ const Net = union(enum) {
                     return error.ValueTooLong;
                 }
                 return switch (i[0]) {
-                    'x' => @This().DontCare,
-                    'z' => @This().HiZ,
-                    '0' => @This().LitZero,
-                    '1' => @This().LitOne,
+                    'x' => .DontCare,
+                    'z' => .HiZ,
+                    '0' => .LitZero,
+                    '1' => .LitOne,
                     else => error.UnexpectedToken,
                 };
             },
