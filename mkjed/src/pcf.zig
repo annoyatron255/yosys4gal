@@ -90,7 +90,7 @@ pub const PinConstraints = struct {
     }
 };
 
-test "parseLine" {
+test PinConstraints {
     const alloc = testing.allocator;
     var pc = PinConstraints.init(alloc);
     defer pc.deinit();

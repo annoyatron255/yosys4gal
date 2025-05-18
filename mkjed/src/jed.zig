@@ -71,6 +71,7 @@ pub const jedOptions = struct {
 
 /// Low-level fuse map file.
 /// contains a number of bits which are 0 or 1.
+/// This file is then written to a .jed
 pub const FuseMap = struct {
     allocator: std.mem.Allocator,
     /// Number of fuses in the file
@@ -199,7 +200,7 @@ pub const FuseMap = struct {
     }
 };
 
-test "fusemap" {
+test FuseMap {
     const alloc = std.testing.allocator;
     var fmap = try FuseMap.init(alloc, 100, 20, false);
     defer fmap.deinit();
@@ -213,7 +214,7 @@ test "fusemap" {
     try std.testing.expectError(error.OutOfBounds, fmap.setSlice(97, fblock));
 }
 
-test "jed file" {
+test "writeJed" {
     const expected_file = std.fmt.comptimePrint(
         \\{c}
         \\{s}

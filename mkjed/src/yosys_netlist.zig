@@ -41,20 +41,16 @@ pub fn strtob(comptime T: type, str: []const u8) !T {
     return result;
 }
 
-test "strtob_ok" {
+test strtob {
     const result = try strtob(u8, "101");
     try testing.expect(result == 5);
-}
-
-test "strtob_fail_size" {
     try testing.expectError(error.SizeMismatch, strtob(u3, "1010"));
-}
-test "strtob_fail_invalid" {
     try testing.expectError(error.InvalidChar, strtob(u8, "a"));
 }
 
 /// Take a unsigned integer and convert it to a binary string.
-/// similar to the yosys format.
+/// similar to the yosys format. will allocate a []u8
+/// that must be manually freed.
 pub fn btostr(
     comptime T: type,
     allocator: std.mem.Allocator,
@@ -82,7 +78,7 @@ pub fn btostr(
     return result;
 }
 
-test "btostr" {
+test btostr {
     const streql = testing.expectEqualStrings;
 
     const actual = try btostr(u8, testing.allocator, 5);
@@ -91,7 +87,8 @@ test "btostr" {
     testing.allocator.free(actual);
 }
 
-/// Net type. Can be an actual net, not connected (
+/// Net type. In Yosys, nets are either a numeric value, or one of xz01
+/// which means that the input is fixed to a global or don't care.
 const Net = union(enum) {
     /// "x" meaning we don't care about the value
     DontCare,
@@ -144,7 +141,7 @@ const Net = union(enum) {
     }
 };
 
-test "net_json" {
+test Net {
     var buf: [128]u8 = undefined;
     const alloc = testing.allocator;
 
@@ -211,7 +208,7 @@ pub const Port = struct {
     offset: i8 = 0,
 };
 
-test "port_json" {
+test Port {
     const alloc = testing.allocator;
     {
         const j =
