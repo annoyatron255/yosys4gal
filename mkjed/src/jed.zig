@@ -225,7 +225,7 @@ test "writeJed" {
         \\QP20*
         \\L0 10000000000000000000000000000000*
         \\C0001*
-        \\{c}1e8a
+        \\{c}
     , .{ 0x02, jedHeader, 0x03 });
     const alloc = std.testing.allocator;
     var fmap = try FuseMap.init(alloc, 64, 20, false);
@@ -237,5 +237,6 @@ test "writeJed" {
 
     try fmap.writeJed(output.writer(), .{});
 
-    try std.testing.expectEqualSlices(u8, expected_file, output.items);
+    // skip the checksum, since it depends on the zig version.
+    try std.testing.expectEqualSlices(u8, expected_file, output.items[0 .. output.items.len - 4]);
 }
