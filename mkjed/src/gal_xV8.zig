@@ -15,7 +15,7 @@ const FuseMap = jed.FuseMap;
 /// note this is not something that you should instance
 /// to make a design - it's got predefined values
 /// based on their specs.
-const Chip = struct {
+const ChipSpec = struct {
     /// total number of fuses for this chip.
     fusemap_size: usize,
     /// number of OLMCs for this chip.
@@ -33,7 +33,7 @@ const Chip = struct {
     olmc_start_addresses: []u32,
 };
 
-const GAL16V8Spec: Chip = .{
+const GAL16V8Spec: ChipSpec = .{
     .num_olmcs = 8,
     .num_pins = 16,
     .olmc_type = OLMC(8, 16),
@@ -85,6 +85,13 @@ const PTerm = struct {
     pub fn deinit(self: *PTerm) void {
         self.alloc.free(self.entries);
     }
+    /// Clears the PTerm. mainly to avoid allocatipn.
+    pub fn clear(self: *@This()) void {
+        self.items = 0;
+        for (self.entries) |entry| {
+            entry = null;
+        }
+    }
 
     /// Adds the pin to the term. Will fail if there's no room
     /// or if there's already a pin with the same pin number
@@ -109,7 +116,7 @@ const PTerm = struct {
 
     /// Write out the term to the fuse map. Needs a chip and a base address.
     /// The base address is typically calculated from an OLMC base address.
-    pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *Chip) !void {
+    pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *ChipSpec) !void {
         for (self.entries) |e| {
             if (e) |entry| {
                 // compute the fuse bit based on the base addr, pin_to_fuse_offset,
