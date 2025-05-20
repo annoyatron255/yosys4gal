@@ -28,11 +28,9 @@ pub fn strtob(comptime T: type, str: []const u8) !T {
     //
     var result: T = 0;
 
-    var i: usize = str.len;
-    while (i > 0) : (i -= 1) {
-        const c = str[i - 1];
+    for (str, 0..) |c, i| {
         if (c == '1') {
-            result |= @as(T, 1) << @truncate(i - 1);
+            result |= @as(T, 1) << @intCast(str.len - i - 1);
         } else if (c != '0') {
             // not 0 or 1, so error
             return error.InvalidChar;
@@ -42,8 +40,14 @@ pub fn strtob(comptime T: type, str: []const u8) !T {
 }
 
 test strtob {
-    const result = try strtob(u8, "101");
-    try testing.expect(result == 5);
+    {
+        const result = try strtob(u8, "101");
+        try testing.expectEqual(5, result);
+    }
+    {
+        const result = try strtob(u8, "001");
+        try testing.expectEqual(1, result);
+    }
     try testing.expectError(error.SizeMismatch, strtob(u3, "1010"));
     try testing.expectError(error.InvalidChar, strtob(u8, "a"));
 }
