@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const testing = std.testing;
-const AnyReader = std.io.AnyReader;
 const fixedBufferStream = std.io.fixedBufferStream;
 
 // TODO: determine if we need to add special vector-based functions.
@@ -86,7 +85,7 @@ pub const PinConstraints = struct {
         }
     }
 
-    pub fn parseReader(self: *PinConstraints, reader: AnyReader) !void {
+    pub fn parseReader(self: *PinConstraints, reader: anytype) !void {
         var buf: [128]u8 = undefined;
         var fbs = fixedBufferStream(&buf);
         const writer = fbs.writer();
