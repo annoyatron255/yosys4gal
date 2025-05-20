@@ -9,11 +9,35 @@
 //! Then the write_jed method takes that fuse map and outputs a valid JED file.
 
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
 const builtin = @import("builtin");
 const meta = @import("meta.zig");
 
 fn bool2char(val: bool) u8 {
     return if (val) '1' else '0';
+}
+
+/// Compact a slice of bools to bytes.
+/// the 0th bool becomes the msb of the byte.
+fn boolpack(comptime T: type, vals: []const bool) T {
+    const info = @typeInfo(T);
+    assert(vals.len <= info.int.bits);
+    var result: T = 0;
+    for (vals, 0..) |v, idx| {
+        if (v) {
+            result |= @as(T, 1) << @intCast(info.int.bits - idx - 1);
+        }
+    }
+    return result;
+}
+
+test boolpack {
+    const expected: u8 = 0b01011111;
+    const input = &.{ false, true, false, true, true, true, true, true };
+    const actual = boolpack(u8, input);
+
+    try testing.expectEqual(expected, actual);
 }
 
 /// JEDEC 16-bit checksum for fuses.
@@ -167,7 +191,6 @@ pub const FuseMap = struct {
             const chunk = self.fuses[i .. i + chunk_size];
             // process this chunk.
 
-            // this is mildly inefficient.
             // first we check if any of the values in our chunk are not default.
             var should_write = false;
             for (chunk) |bit| {
@@ -176,6 +199,7 @@ pub const FuseMap = struct {
                     break;
                 }
             }
+            // if we have a non-default, we write the entire chunk.
             if (should_write) {
                 // construct the chunk_text.
                 for (chunk, 0..) |bit, idx| {
@@ -197,6 +221,27 @@ pub const FuseMap = struct {
         try writer.print("{x:04}", .{file_chk});
         // now, dump our finalized buffer to the output.
         try output.writeAll(buf.items);
+    }
+
+    /// Writes the binary output using jedutil's binary format.
+    /// The format contains a u32 for the fuse count, and then
+    /// bit-packed fuse bits.
+    pub fn writeBin(self: *FuseMap, output: anytype) !void {
+        // first, write the length as a 4-byte value.
+        try output.writeInt(u32, self.fuses.len, .little);
+
+        var i: usize = 0;
+
+        while (i < self.fuses.len) {
+            const remaining = self.fuses.len - i;
+            const chunk_size = @min(8, remaining);
+            const chunk = self.fuses[i .. i + chunk_size];
+
+            const byte = boolpack(u8, chunk);
+            try output.writeByte(byte);
+
+            i += chunk_size;
+        }
     }
 };
 
