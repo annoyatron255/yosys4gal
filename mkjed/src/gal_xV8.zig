@@ -61,104 +61,89 @@ pub const Pin = struct { pin: u32, inverted: bool = false };
 /// PTerm is a product term. It contains a list of pins, which are then AND'ed together.
 /// OLMCs will take an array of PTerms and OR them together to get the final result of
 /// the logic array.
-const PTerm = struct {
-    alloc: Allocator,
-    /// Pin entries
-    entries: []?Pin,
+pub fn PTerm(comptime size: usize) type {
+    return struct {
+        /// Pin entries
+        entries: [size]?Pin,
 
-    /// Number of items in the pin
-    items: usize = 0,
+        /// Number of items in the pin
+        items: usize = 0,
 
-    size: usize,
+        /// Fuse map offset.
+        base_addr: usize,
 
-    /// Fuse map offset.
-    base_addr: usize,
-
-    pub fn init(alloc: Allocator, base: usize, size: usize) @This() {
-        return .{
-            .base_addr = base,
-            .entries = alloc.alloc(?Pin, size),
-            .size = size,
-        };
-    }
-
-    pub fn deinit(self: *PTerm) void {
-        self.alloc.free(self.entries);
-    }
-    /// Clears the PTerm. mainly to avoid allocatipn.
-    pub fn clear(self: *@This()) void {
-        self.items = 0;
-        for (self.entries) |entry| {
-            entry = null;
-        }
-    }
-
-    /// Adds the pin to the term. Will fail if there's no room
-    /// or if there's already a pin with the same pin number
-    pub fn addPin(self: *@This(), p: Pin) !void {
-        // check if the pin number exists already
-        if (self.items == self.size) {
-            return error.TermFull;
+        pub fn init(alloc: Allocator, base: usize) @This() {
+            return .{
+                .base_addr = base,
+                .entries = alloc.alloc(?Pin, size),
+            };
         }
 
-        for (self.entries) |entry| {
-            if (entry) |e| {
-                if (e.pin == p.pin) {
-                    return error.PinCollision;
+        /// Clears the PTerm. mainly to avoid allocatipn.
+        pub fn clear(self: *@This()) void {
+            self.items = 0;
+            for (self.entries) |entry| {
+                entry = null;
+            }
+        }
+
+        /// Adds the pin to the term. Will fail if there's no room
+        /// or if there's already a pin with the same pin number
+        pub fn addPin(self: *@This(), p: Pin) !void {
+            // check if the pin number exists already
+            if (self.items == self.entries.len) {
+                return error.TermFull;
+            }
+
+            for (self.entries) |entry| {
+                if (entry) |e| {
+                    if (e.pin == p.pin) {
+                        return error.PinCollision;
+                    }
+                }
+            }
+            // add the pin at the end,
+            assert(self.entries[self.items] == null);
+            self.entries[self.items] = p;
+            self.items += 1;
+        }
+
+        /// Write out the term to the fuse map. Needs a chip and a base address.
+        /// The base address is typically calculated from an OLMC base address.
+        pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *ChipSpec) !void {
+            for (self.entries) |e| {
+                if (e) |entry| {
+                    // compute the fuse bit based on the base addr, pin_to_fuse_offset,
+                    // and pin inversion status.
+                    var fuse = chip.pin_to_fuse_offset[entry.pin];
+                    if (entry.inverted) {
+                        fuse += 1;
+                    }
+                    fmap.set(fuse, true);
                 }
             }
         }
-        // add the pin at the end,
-        assert(self.entries[self.items] == null);
-        self.entries[self.items] = p;
-        self.items += 1;
-    }
-
-    /// Write out the term to the fuse map. Needs a chip and a base address.
-    /// The base address is typically calculated from an OLMC base address.
-    pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *ChipSpec) !void {
-        for (self.entries) |e| {
-            if (e) |entry| {
-                // compute the fuse bit based on the base addr, pin_to_fuse_offset,
-                // and pin inversion status.
-                var fuse = chip.pin_to_fuse_offset[entry.pin];
-                if (entry.inverted) {
-                    fuse += 1;
-                }
-                fmap.set(fuse, true);
-            }
-        }
-    }
-};
+    };
+}
 
 /// Create an OLMC type with the given number of rows, each
 /// containing up to pterm_size inputs.
-fn OLMC(comptime n_rows: u16, comptime pterm_size: u16, comptime tristate: bool) type {
-    if (tristate) {
-        return struct {
-            /// Output pin for this macrocell
-            pin: u16,
-            /// PTerm rows that belong to this macrocell
-            rows: [n_rows - 1]PTerm(pterm_size) = null,
-            /// The term used for output enable.
-            oe_term: PTerm(pterm_size) = null,
+fn OLMC(comptime n_rows: u16, comptime pterm_size: u16, comptime mode: Mode) type {
+    return struct {
+        const Term = PTerm(pterm_size);
+        /// Output pin for this macrocell
+        pin: u16,
+        rows: [n_rows]Term = null,
 
-            /// OLMC configuration bits
-            xor: bool = false,
-            ac1: bool = false,
-        };
-    } else {
-        return struct {
-            /// Output pin for this macrocell
-            pin: u16,
-            /// PTerm rows that belong to this macrocell
-            rows: [n_rows]PTerm(pterm_size) = null,
+        // OLMC configuration bits
 
-            /// OLMC configuration bits
-            xor: bool = false,
-            ac1: bool = false,
-        };
-    }
+        /// active high or active low
+        xor: bool = false,
+        /// In simple mode, this is pin input/output configuration.
+        /// in complex mode, this is if we should use the OE term
+        /// in registered mode, this is if the pin should use the OE at all.
+        ac1: bool = false,
+    };
 }
 
 // Chip -> OLMCs -> PTerms -> Pins
