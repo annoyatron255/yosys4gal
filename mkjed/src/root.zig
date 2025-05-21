@@ -7,6 +7,7 @@ const testing = std.testing;
 pub const yosys_netlist = @import("./yosys_netlist.zig");
 pub const pcf = @import("./pcf.zig");
 pub const jed = @import("./jed.zig");
+pub const xv8 = @import("./gal_xV8.zig");
 
 pub export fn add(a: i32, b: i32) i32 {
     return a + b;
