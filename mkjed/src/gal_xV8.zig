@@ -32,7 +32,7 @@ const ChipSpec = struct {
 
     /// Starting fuse index for each OLMC rows
     /// Index using OLMC array position.
-    olmc_start_addresses: []u32,
+    olmc_block_address: []u32,
 
     /// starting fuse address of the xor bits for OLMCs
     /// Use the index in the OLMC array to increment
@@ -93,6 +93,9 @@ pub const PTerm = struct {
             .allocator = allocator,
         };
     }
+    pub fn denit(self: *PTerm) void {
+        self.allocator.free(self.entries);
+    }
 
     /// Clears the PTerm
     pub fn clear(self: *@This()) void {
@@ -125,7 +128,7 @@ pub const PTerm = struct {
 
     /// Write out the term to the fuse map. Needs a chip and a base address.
     /// The base address is typically calculated from an OLMC base address.
-    pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *ChipSpec) !void {
+    pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *const ChipSpec) !void {
         for (self.entries) |e| {
             if (e) |entry| {
                 // compute the fuse bit based on the base addr, pin_to_fuse_offset,
@@ -137,6 +140,26 @@ pub const PTerm = struct {
                 fmap.set(fuse, true);
             }
         }
+    }
+
+    /// Produces a slice of bools that can be added to a fuse map. The length of the slice
+    /// is based on the chip. The pins are evaluated based on the ChipSpec used to construct
+    /// this PTerm type.
+    pub fn synthesize(self: *PTerm, chipspec: *ChipSpec) ![]bool {
+        // compute the needed buffer size based on the chip.
+        const len = chipspec.num_pins * 2;
+        var fuses = try self.allocator.alloc(bool, len);
+
+        for (self.entries) |e| {
+            if (e) |entry| {
+                var fuse_offset = chipspec.pin_to_fuse_offset[@intFromEnum(entry.pin)];
+                if (entry.inverted) {
+                    fuse_offset += 1;
+                }
+                fuses[fuse_offset] = true;
+            }
+        }
+        return fuses;
     }
 };
 
@@ -168,6 +191,7 @@ test PTerm {
         term.clear();
         try term.addPin(pin1);
     }
+    {}
 }
 
 /// Create an OLMC type with the given number of rows, each
@@ -176,7 +200,9 @@ pub const OLMC = struct {
     pin: Pin,
     rows: []PTerm,
 
+    /// Active high/low bit
     xor: bool = false,
+    /// Determines if this OLMC is registered or combinational
     ac1: bool = false,
 
     /// Create an OLMC.
