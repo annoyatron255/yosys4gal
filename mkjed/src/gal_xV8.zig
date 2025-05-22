@@ -12,11 +12,12 @@ const assert = std.debug.assert;
 const jed = @import("jed.zig");
 const FuseMap = jed.FuseMap;
 
-/// critical parameters for a chip
-/// note this is not something that you should instance
-/// to make a design - it's got predefined values
-/// based on their specs.
+/// Definitions for a chip.
+/// This is used by many of the comptime-generated structs
+/// to create instances of these structs for a specific chip.
 const ChipSpec = struct {
+    ac0_addr: u32,
+    syn_addr: u32,
     /// Valid input pin type
     pin_type: type,
     /// total number of fuses for this chip.
@@ -34,7 +35,10 @@ const ChipSpec = struct {
     olmc_ac1_address: u32,
 };
 
+/// Registered-mode GAL16V8.
 const GAL16V8Spec: ChipSpec = .{
+    .ac0_addr = 2193,
+    .syn_addr = 2192,
     .pin_type = Pin16V8,
     .fusemap_size = 2194,
     .olmc_ac1_address = 2120,
@@ -42,8 +46,13 @@ const GAL16V8Spec: ChipSpec = .{
     .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
 };
 
-/// valid pins for gal16v8 in registered mode.
+// The Pin type category is an enum(u32) with values in the shape of
+// p<uint>. They are then processed at compile time to allow for
+// pinFromInt and pinToInt
+
+/// GAL16V8 input pins.
 pub const Pin16V8 = enum(u32) {
+    //pin 1 is clk
     p2,
     p3,
     p4,
@@ -52,7 +61,8 @@ pub const Pin16V8 = enum(u32) {
     p7,
     p8,
     p9,
-    p10,
+    // pin 10 is gnd
+    // pin 11 is OE
     p12,
     p13,
     p14,
@@ -61,7 +71,10 @@ pub const Pin16V8 = enum(u32) {
     p17,
     p18,
     p19,
-    const offsets = .{ 0, 4, 8, 12, 16, 20, 24, 28, 30, 26, 22, 18, 14, 10, 6, 2 };
+    // pin 20 is vcc
+
+    /// Pin offsets in the fuse column.
+    const offsets = [_]u8{ 0, 4, 8, 12, 16, 20, 24, 28, 30, 26, 22, 18, 14, 10, 6, 2 };
     /// Convert a pin to the fuse column offset
     pub fn toOffset(self: Pin16V8) usize {
         return offsets[@intFromEnum(self)];
@@ -70,7 +83,9 @@ pub const Pin16V8 = enum(u32) {
 
 /// create a pin from an integer ie from a pcf file.
 /// can fail if the integer is not in the valid range.
+/// Example is 2 => .p2 of the provided enum type, if it exists.
 pub fn pinFromInt(comptime T: type, pin: usize) !T {
+    // this isn't the fastest, i think it could be one-shotted.
     inline for (std.meta.fields(T)) |field| {
         const pin_number = comptime std.fmt.parseInt(usize, field.name[1..], 10) catch unreachable;
         if (pin == pin_number) {
@@ -81,8 +96,18 @@ pub fn pinFromInt(comptime T: type, pin: usize) !T {
 }
 
 test pinFromInt {
-    try testing.expectEqual(Pin16V8.p10, pinFromInt(Pin16V8, 10));
+    try testing.expectEqual(Pin16V8.p12, pinFromInt(Pin16V8, 12));
     try testing.expectError(error.InvalidPin, pinFromInt(Pin16V8, 1));
+}
+
+/// Convert a pin-enum back into the integer pin value.
+pub fn pinToInt(pin: anytype) !usize {
+    const t = std.enums.tagName(@TypeOf(pin), pin) orelse return error.InvalidPin;
+    return std.fmt.parseInt(usize, t[1..], 10) catch error.InvalidPin;
+}
+
+test pinToInt {
+    try testing.expectEqual(12, pinToInt(Pin16V8.p12));
 }
 
 /// PTerm is a product term. It contains a list of pins, which are then AND'ed together.
@@ -90,9 +115,11 @@ test pinFromInt {
 /// the logic array.
 pub fn PTerm(spec: *const ChipSpec) type {
     return struct {
+        /// InputPin stores the pin enum and an inversion flag
         pub const InputPin = struct { pin: spec.pin_type, inverted: bool = false };
         const n_entries = std.meta.fields(spec.pin_type).len;
-        /// Pin entries
+
+        /// Array of pin entries. The size is based on the size of the pin enum.
         entries: [n_entries]?InputPin = [_]?InputPin{null} ** n_entries,
 
         /// Number of items in the PTerm
@@ -110,14 +137,9 @@ pub fn PTerm(spec: *const ChipSpec) type {
         /// or if there's already a pin with the same pin number.
         pub fn addPin(self: *@This(), p: InputPin) !void {
             // check if the pin number exists already
-            if (self.items == self.entries.len) {
-                // this is a special case of pin collision.
-                // we can only be full if we have one of every pin already.
-                // so any pin we add would collide.
-                // However, pin values are not bounds checked (yet).
-                return error.TermFull;
-            }
-
+            // there's a secret invariant here - since entries is
+            // the same size as the pin enum, we can have at most n_entries
+            // elements, which means that the uniqueness property here
             for (self.entries) |entry| {
                 if (entry) |e| {
                     if (e.pin == p.pin) {
@@ -131,40 +153,24 @@ pub fn PTerm(spec: *const ChipSpec) type {
             self.items += 1;
         }
 
-        /// Write out the term to the fuse map. Needs a chip and a base address.
-        /// The base address is typically calculated from an OLMC base address.
-        pub fn writeFuse(self: *@This(), fmap: *FuseMap, chip: *const ChipSpec) !void {
-            for (self.entries) |e| {
-                if (e) |entry| {
-                    // compute the fuse bit based on the base addr, pin_to_fuse_offset,
-                    // and pin inversion status.
-                    var fuse = self.base_addr + chip.pin_to_fuse_offset[@intFromEnum(entry.pin)];
-                    if (entry.inverted) {
-                        fuse += 1;
-                    }
-                    fmap.set(fuse, true);
-                }
-            }
-        }
-
-        /// Produces a slice of bools that can be added to a fuse map. The length of the slice
-        /// is based on the chip. The pins are evaluated based on the ChipSpec used to construct
-        /// this PTerm type.
-        pub fn synthesize(self: *PTerm) ![]bool {
+        /// Produces a slice of bools that can be added to a fuse map.
+        pub fn synthesize(self: *@This()) ![]bool {
             // compute the needed buffer size based on the chip.
-            //
-            var fuses: [n_entries * 2]bool = false;
+            var fuses: [n_entries * 2]bool = undefined;
+            @memset(&fuses, false);
 
             for (self.entries) |e| {
                 if (e) |entry| {
-                    var fuse_offset = spec.pin_to_fuse_offset[@intFromEnum(entry.pin)];
+                    // the toOffset function on pin-enums matches the enums
+                    // to their columns.
+                    var fuse_offset = entry.pin.toOffset();
                     if (entry.inverted) {
                         fuse_offset += 1;
                     }
                     fuses[fuse_offset] = true;
                 }
             }
-            return fuses;
+            return &fuses;
         }
     };
 }
@@ -175,9 +181,9 @@ test PTerm {
     {
         var term: Term = .{};
         // add a pin
-        const pin1: Term.InputPin = .{ .pin = @enumFromInt(0) };
-        try term.addPin(pin1);
-        try testing.expectError(error.PinCollision, term.addPin(pin1));
+        const pin: Term.InputPin = .{ .pin = .p2 };
+        try term.addPin(pin);
+        try testing.expectError(error.PinCollision, term.addPin(pin));
     }
     // testing term capacity
     {
@@ -188,7 +194,7 @@ test PTerm {
             try term.addPin(pin);
         }
         const bad_pin: Term.InputPin = .{ .pin = @enumFromInt(0) };
-        try testing.expectError(error.TermFull, term.addPin(bad_pin));
+        try testing.expectError(error.PinCollision, term.addPin(bad_pin));
         // clear the term, and add.
         term.clear();
         try term.addPin(bad_pin);
@@ -197,9 +203,41 @@ test PTerm {
     {
         var term: Term = .{};
         // add a pin
-        const pin1: Term.InputPin = .{ .pin = @enumFromInt(0) };
+        const pin1: Term.InputPin = .{ .pin = @enumFromInt(0), .inverted = true };
         try term.addPin(pin1);
+        const fuses = try term.synthesize();
+        try testing.expectEqual(true, fuses[1]);
     }
+}
+
+pub fn OLMC(spec: *const ChipSpec) type {
+    const Term = PTerm(spec);
+    // OLMCs can have a variable number of rows.
+    return struct {
+        allocator: Allocator,
+        output_pin: spec.pin_type,
+        rows: []Term,
+        xor: bool = false,
+        ac1: bool = false,
+
+        pub fn init(allocator: Allocator, size: usize, pin: spec.pin_type) !@This() {
+            const rows = try allocator.alloc(Term, size);
+            return .{
+                .allocator = allocator,
+                .output_pin = pin,
+                .rows = rows,
+            };
+        }
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.rows);
+        }
+    };
+}
+
+test OLMC {
+    const alloc = testing.allocator;
+    var olmc = try OLMC(&GAL16V8Spec).init(alloc, 2, .p2);
+    defer olmc.deinit();
 }
 
 // Create an OLMC type with the given number of rows, each
@@ -228,7 +266,3 @@ test PTerm {
 //         };
 //     }
 // };
-
-// Chip -> OLMCs -> PTerms -> Pins
-// OLMCs also contain xor and ac1 values
-// chip contains SYN + AC0
