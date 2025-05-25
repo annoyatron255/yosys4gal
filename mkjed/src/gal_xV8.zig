@@ -3,6 +3,7 @@
 //! the fitter or other tools will instantiate these objects
 //! which will contain validation steps to ensure the configuration
 //! is correct. Then it can dump to a fuse map/jed file.
+//! This is "post-routing" - we only refer to actual hardware pins.
 
 const std = @import("std");
 const testing = std.testing;
@@ -35,9 +36,10 @@ const ChipSpec = struct {
     /// Use the index in the OLMC array to increment
     olmc_ac1_address: u32,
 
-    /// if we have one global OE or each OLMC has an OE-term.
-    /// if a OLMC has an OE term, the total size of the OLMC is row_size + 1
-    global_oe: bool,
+    /// If, in registered mode, we have a global OE pin, or
+    /// OE terms for each OLMC. If the latter, the total size
+    /// of the "logic" terms is row_size - 1 for registered
+    regisered_global_oe: bool,
 };
 
 /// Registered-mode GAL16V8.
@@ -50,7 +52,7 @@ const GAL16V8Spec: ChipSpec = .{
     .olmc_xor_address = 2048,
     .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
     .olmc_row_sizes = &[_]u32{8} ** 8,
-    .global_oe = true,
+    .regisered_global_oe = true,
 };
 
 // The Pin type category is an enum with values in the shape of p<uint>. They
@@ -187,9 +189,23 @@ pub fn PTerm(spec: *const ChipSpec) type {
             }
             return &fuses;
         }
+
+        pub fn format(self: *const Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+
+            for (self.entries) |entry| {
+                if (entry) |pin| {
+                    const val = pinToInt(pin.pin) catch unreachable;
+                    if (pin.inverted) {
+                        try writer.print("(~{d})", .{val});
+                    } else {
+                        try writer.print("({d})", .{val});
+                    }
+                }
+            }
+        }
     };
 }
-
 test PTerm {
     const Term = PTerm(&GAL16V8Spec);
     // testing pin collision
@@ -223,26 +239,73 @@ test PTerm {
         const fuses = try term.synthesize();
         try testing.expectEqual(true, fuses[1]);
     }
+    // testing print
+    {
+        var term: Term = .{};
+        const pin1: Term.InputPin = .{ .pin = .p2, .inverted = true };
+        try term.addPin(pin1);
+        var buf: [128]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        try std.fmt.format(fbs.writer(), "{}", .{term});
+        try testing.expectEqualStrings("(~2)", fbs.getWritten());
+    }
+}
+
+pub fn SOPTerm(spec: *const ChipSpec) type {
+    return struct {
+        const Self = @This();
+        const Product = PTerm(spec);
+
+        allocator: Allocator,
+        products: []Product,
+
+        pub fn init(allocator: Allocator, size: usize) !Self {
+            const products = try allocator.alloc(Product, size);
+            for (products) |*prod| {
+                prod.clear();
+            }
+
+            return .{
+                .allocator = allocator,
+                .products = .rows,
+            };
+        }
+
+        pub fn format(self: *const Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            var first = true;
+            for (self.products) |prod| {
+                if (!first) {
+                    // print a plus
+                    writer.writeAll(" + ", .{});
+                }
+                first = false;
+                writer.print("{}", .{prod});
+            }
+        }
+    };
 }
 
 pub fn OLMC(spec: *const ChipSpec) type {
-    const Term = PTerm(spec);
     // OLMCs can have a variable number of rows.
     return struct {
         const Self = @This();
+        const Term = PTerm(spec);
+        const PinType = spec.pin_type;
         allocator: Allocator,
         // the pin that this OLMC drives.
-        output_pin: spec.pin_type,
+        output_pin: PinType,
         /// The rows for the OLMC terms. Supports mixed-size rows (22v10)
         rows: []Term,
         /// Active high or low.
-        xor: bool = false,
+        active_high: bool = false,
         /// Registered or combinational.
-        ac1: bool = false,
+        /// Note that the combinational mode uses the first term as the OE
+        comb: bool = false,
 
-        pub fn init(allocator: Allocator, size: usize, pin: spec.pin_type) !Self {
+        pub fn init(allocator: Allocator, size: usize, pin: PinType) !Self {
             const rows = try allocator.alloc(Term, size);
-            for (rows) |row| {
+            for (rows) |*row| {
                 row.clear();
             }
             return .{
@@ -255,15 +318,28 @@ pub fn OLMC(spec: *const ChipSpec) type {
             self.allocator.free(self.rows);
         }
 
-        ///
+        ///writes the OLMC to the fuse map.
         pub fn synthesize(self: *const Self, fmap: *FuseMap, index: usize) !void {
-            try fmap.set(spec.olmc_ac1_address + index, self.ac1);
-            try fmap.set(spec.olmc_xor_address + index, self.xor);
+            try fmap.set(spec.olmc_ac1_address + index, self.comb);
+            try fmap.set(spec.olmc_xor_address + index, self.active_high);
             var base = spec.olmc_block_address[index];
             for (self.rows) |row| {
                 const data = try row.synthesize();
                 try fmap.setSlice(base, data);
                 base += data.len;
+            }
+        }
+
+        /// set the OE term to the AND of the given pins
+        pub fn set_oe_term(self: *Self, term: []const PinType) !void {
+            // If the chip uses a global OE for registered outputs,
+            // we will only allow OE terms on combinational rows
+            if (spec.regisered_global_oe) {
+                assert(self.comb == true);
+            }
+            self.rows[0].clear();
+            for (term) |p| {
+                try self.rows[0].addPin(p);
             }
         }
     };
@@ -273,6 +349,18 @@ test OLMC {
     const alloc = testing.allocator;
     var olmc = try OLMC(&GAL16V8Spec).init(alloc, 2, .p2);
     defer olmc.deinit();
+}
+
+pub fn Chip(spec: *const ChipSpec) type {
+    return struct {
+        const Self = @This();
+        const TermType = PTerm(spec);
+        const OlmcType = OLMC(spec);
+
+        allocator: Allocator,
+        olmcs: []OlmcType,
+        fusemap: *FuseMap,
+    };
 }
 
 // Create an OLMC type with the given number of rows, each

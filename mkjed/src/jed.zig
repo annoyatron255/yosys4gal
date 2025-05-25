@@ -162,6 +162,7 @@ pub const FuseMap = struct {
 
     /// Write the fusemap in the jed format to the given output.
     pub fn writeJed(self: *FuseMap, output: anytype, options: jedOptions) !void {
+        // pre alloc 8k, probably will be larger.
         var buf = try std.ArrayList(u8).initCapacity(self.allocator, 8192);
         defer buf.deinit();
         // write to this buffer
@@ -171,7 +172,7 @@ pub const FuseMap = struct {
         try writer.writeAll(jedHeader);
         try writer.print("\n{s}*\n", .{options.comment});
         // start writing fuse information.
-        // default fuse value
+        // default fuse value and parameters
         try writer.print(
             \\F{c}*
             \\G{c}*
