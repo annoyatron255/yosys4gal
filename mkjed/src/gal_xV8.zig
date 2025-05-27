@@ -4,6 +4,7 @@
 //! which will contain validation steps to ensure the configuration
 //! is correct. Then it can dump to a fuse map/jed file.
 //! This is "post-routing" - we only refer to actual hardware pins.
+//! Net-to-pin routing should be handled prior to this step.
 
 const std = @import("std");
 const testing = std.testing;
@@ -39,7 +40,7 @@ const ChipSpec = struct {
     /// If, in registered mode, we have a global OE pin, or
     /// OE terms for each OLMC. If the latter, the total size
     /// of the "logic" terms is row_size - 1 for registered
-    regisered_global_oe: bool,
+    registered_global_oe: bool,
 };
 
 /// Registered-mode GAL16V8.
@@ -293,7 +294,7 @@ pub fn OLMC(spec: *const ChipSpec) type {
         const Term = PTerm(spec);
         const PinType = spec.pin_type;
         allocator: Allocator,
-        // the pin that this OLMC drives.
+        /// the pin that this OLMC drives.
         output_pin: PinType,
         /// The rows for the OLMC terms. Supports mixed-size rows (22v10)
         rows: []Term,
@@ -334,7 +335,7 @@ pub fn OLMC(spec: *const ChipSpec) type {
         pub fn set_oe_term(self: *Self, term: []const PinType) !void {
             // If the chip uses a global OE for registered outputs,
             // we will only allow OE terms on combinational rows
-            if (spec.regisered_global_oe) {
+            if (spec.registered_global_oe) {
                 assert(self.comb == true);
             }
             self.rows[0].clear();
@@ -362,30 +363,3 @@ pub fn Chip(spec: *const ChipSpec) type {
         fusemap: *FuseMap,
     };
 }
-
-// Create an OLMC type with the given number of rows, each
-// containing up to pterm_size inputs.
-// pub const OLMC = struct {
-//     pin: Pin,
-//     rows: []PTerm,
-//
-//     /// Active high/low bit
-//     xor: bool = false,
-//     /// Determines if this OLMC is registered or combinational
-//     ac1: bool = false,
-//
-//     /// Create an OLMC.
-//     fn init(arena: Allocator, n_rows: usize, row_size: usize, pin: Pin, base_addr: usize) !OLMC {
-//         const rows = try arena.alloc(PTerm, n_rows);
-//
-//         for (rows) |term| {
-//             // FIXME: base_addr calculations
-//             try term.init(arena, row_size, base_addr);
-//         }
-//
-//         return .{
-//             .pin = pin,
-//             .rows = rows,
-//         };
-//     }
-// };

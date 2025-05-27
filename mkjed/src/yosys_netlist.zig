@@ -19,13 +19,11 @@ const JsonStringMap = json.ArrayHashMap([]const u8);
 /// Note that the lengths must be exact, i.e if a string is shorter than
 /// the container, it will still error.
 pub fn strtob(comptime T: type, str: []const u8) !T {
-    comptime {
-        const info = @typeInfo(T);
-        if (info != .int or info.int.signedness != .unsigned) {
-            @compileError("strtob only accepts unsigned integer types");
-        }
+    const info = @typeInfo(T);
+    if (info != .int or info.int.signedness != .unsigned) {
+        @compileError("strtob only accepts unsigned integer types");
     }
-    const n_bits = @typeInfo(T).int.bits;
+    const n_bits = info.int.bits;
 
     // check that our target uint is big enough to hold the string.
     // note that technically we could find the most significant 1 bit,
@@ -68,14 +66,12 @@ pub fn btostr(
     allocator: Allocator,
     val: T,
 ) ![]u8 {
-    comptime {
-        const info = @typeInfo(T);
-        if (info != .int or info.int.signedness != .unsigned) {
-            @compileError("btostr only accepts unsigned integer types");
-        }
+    const info = @typeInfo(T);
+    if (info != .int or info.int.signedness != .unsigned) {
+        @compileError("btostr only accepts unsigned integer types");
     }
 
-    const n_bits = @typeInfo(T).int.bits;
+    const n_bits = info.int.bits;
 
     var result = try allocator.alloc(u8, n_bits);
     errdefer allocator.free(result);
@@ -104,7 +100,7 @@ test btostr {
 // --------------------------------------------------------------------------------
 // JsonStringMap helper functions
 // These functions are used to operate on the JsonStringMap type, which is
-// a JSON-serializeable string-string map.
+// a JSON-serializeable string -> string map.
 // --------------------------------------------------------------------------------
 
 /// Reads a property from a JsonStringMap. the type can be a string, or an integer type.
@@ -142,6 +138,14 @@ test readProperty {
         try testing.expectEqual(0b011011, prop);
     }
 }
+
+// --------------------------------------------------------------------------------
+// Yosys Netlist core definitions.
+// These are the actual representations of the Yosys netlist.
+// We don't add new fields here - if we need to, things get complicated.
+// Instead, try and create wrapper or container structs that have fields
+// pointing to structures inside the Netlist.
+// --------------------------------------------------------------------------------
 
 /// Net type. In Yosys, nets are either a numeric value, or one of xz01
 /// which means that the input is fixed to a global or don't care.
@@ -356,6 +360,11 @@ pub const NetDetails = struct {
     offset: i8 = 0,
 };
 
+// --------------------------------------------------------------------------------
+// Auxiliary and helper data structures.
+// These exist to aid more complex tasks.
+// --------------------------------------------------------------------------------
+
 /// Net-to-Cell lookup table.
 /// give a net, get an array of ( port, *Cell ).
 /// Can be used to "dance" with cell traversal. Cell -> Net -> NetGraph list -> Cell
@@ -364,12 +373,12 @@ pub const NetMap = struct {
     const Self = @This();
     const NetMember = struct { port: []const u8, cell: *const Cell };
     const LookupTable = std.AutoHashMap(u32, std.ArrayList(*NetMember));
-    /// This arena stores the NetMember
+    /// This arena stores the NetMember and is created using the main allocator.
     arena: std.heap.ArenaAllocator,
     /// this allocator is used when creating the hashmap/arraylists
     gpa: Allocator,
     /// the lookup table. You can use this directly.
-    lookup: std.AutoHashMap(u32, std.ArrayList(*NetMember)),
+    lookup: LookupTable,
 
     pub fn init(allocator: Allocator) !Self {
         const arena = std.heap.ArenaAllocator.init(allocator);
@@ -445,12 +454,13 @@ test NetMap {
     defer netmap.deinit();
     const top = netlist.value.findTopModule();
     try netmap.addModule(top);
-    // this is an annoyingly hard read.
+    // this is an annoyingly fragile test.
     const cells = netmap.lookup.get(5) orelse unreachable;
 
     // there should just be one OLMC on this net.
     try testing.expectEqual(1, cells.items.len);
     const net = cells.items[0];
+    // it should be the output port
     try testing.expectEqualStrings("Y", net.port);
 
     // check that it's the one we think it is.

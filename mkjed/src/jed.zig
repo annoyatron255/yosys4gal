@@ -226,23 +226,16 @@ pub const FuseMap = struct {
 
     /// Writes the binary output using jedutil's binary format.
     /// The format contains a u32 for the fuse count, and then
-    /// bit-packed fuse bits.
+    /// bit-packed fuse bits. This is largely untested.
     pub fn writeBin(self: *FuseMap, output: anytype) !void {
         // first, write the length as a 4-byte value.
-        try output.writeInt(u32, self.fuses.len, .little);
+        try output.writeInt(u32, self.fuses.len, .big);
 
-        var i: usize = 0;
-
-        while (i < self.fuses.len) {
-            const remaining = self.fuses.len - i;
-            const chunk_size = @min(8, remaining);
-            const chunk = self.fuses[i .. i + chunk_size];
-
-            const byte = boolpack(u8, chunk);
-            try output.writeByte(byte);
-
-            i += chunk_size;
+        var bits = std.io.bitWriter(.big, output);
+        for (self.fuses) |fuse| {
+            bits.writeBits(fuse, 1);
         }
+        bits.flushBits();
     }
 };
 
