@@ -1,0 +1,514 @@
+{
+  "creator": "Yosys 0.38 (git sha1 543faed9c, gcc 13.2.1 -march=x86-64 -mtune=generic -O2 -fno-plt -fexceptions -fstack-clash-protection -fcf-protection -ffile-prefix-map=/build/yosys/src=/usr/src/debug/yosys -fPIC -Os)",
+  "modules": {
+    "DFF_P": {
+      "attributes": {
+        "blackbox": "00000000000000000000000000000001"
+      },
+      "ports": {
+        "C": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "D": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "Q": {
+          "direction": "output",
+          "bits": [ 4 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "C": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+          }
+        },
+        "D": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+          }
+        },
+        "Q": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+          }
+        }
+      }
+    },
+    "GAL_1SOP": {
+      "attributes": {
+        "dynports": "00000000000000000000000000000001",
+        "blackbox": "00000000000000000000000000000001",
+        "cells_not_processed": "00000000000000000000000000000001",
+        "src": "cells_sim.v:25.1-47.10"
+      },
+      "parameter_default_values": {
+        "DEPTH": "00000000000000000000000000000000",
+        "TABLE": "00000000000000000000000000000000",
+        "WIDTH": "00000000000000000000000000000000"
+      },
+      "ports": {
+        "A": {
+          "direction": "input",
+          "offset": -1,
+          "upto": 1,
+          "bits": [ 2, 3 ]
+        },
+        "Y": {
+          "direction": "output",
+          "bits": [ 4 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "A": {
+          "hide_name": 0,
+          "bits": [ 2, 3 ],
+          "offset": -1,
+          "upto": 1,
+          "attributes": {
+            "src": "cells_sim.v:30.20-30.21"
+          }
+        },
+        "Y": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "cells_sim.v:31.13-31.14"
+          }
+        }
+      }
+    },
+    "GAL_INPUT": {
+      "attributes": {
+        "blackbox": "00000000000000000000000000000001",
+        "cells_not_processed": "00000000000000000000000000000001",
+        "src": "cells_sim.v:49.1-54.10"
+      },
+      "ports": {
+        "A": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "Y": {
+          "direction": "output",
+          "bits": [ 3 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "A": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "cells_sim.v:50.8-50.9"
+          }
+        },
+        "Y": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "cells_sim.v:51.9-51.10"
+          }
+        }
+      }
+    },
+    "GAL_OLMC": {
+      "attributes": {
+        "blackbox": "00000000000000000000000000000001",
+        "cells_not_processed": "00000000000000000000000000000001",
+        "src": "cells_sim.v:56.1-78.10"
+      },
+      "parameter_default_values": {
+        "INVERTED": "00000000000000000000000000000000",
+        "REGISTERED": "00000000000000000000000000000000"
+      },
+      "ports": {
+        "C": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "E": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "A": {
+          "direction": "input",
+          "bits": [ 4 ]
+        },
+        "Y": {
+          "direction": "inout",
+          "bits": [ 5 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "A": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "cells_sim.v:60.14-60.15"
+          }
+        },
+        "C": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "cells_sim.v:60.8-60.9"
+          }
+        },
+        "E": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "cells_sim.v:60.11-60.12"
+          }
+        },
+        "Y": {
+          "hide_name": 0,
+          "bits": [ 5 ],
+          "attributes": {
+            "src": "cells_sim.v:61.8-61.9"
+          }
+        }
+      }
+    },
+    "GAL_SOP": {
+      "attributes": {
+        "dynports": "00000000000000000000000000000001",
+        "blackbox": "00000000000000000000000000000001",
+        "cells_not_processed": "00000000000000000000000000000001",
+        "src": "cells_sim.v:1.1-23.10"
+      },
+      "parameter_default_values": {
+        "DEPTH": "00000000000000000000000000000000",
+        "TABLE": "00000000000000000000000000000000",
+        "WIDTH": "00000000000000000000000000000000"
+      },
+      "ports": {
+        "A": {
+          "direction": "input",
+          "offset": -1,
+          "upto": 1,
+          "bits": [ 2, 3 ]
+        },
+        "Y": {
+          "direction": "output",
+          "bits": [ 4 ]
+        }
+      },
+      "cells": {
+      },
+      "netnames": {
+        "A": {
+          "hide_name": 0,
+          "bits": [ 2, 3 ],
+          "offset": -1,
+          "upto": 1,
+          "attributes": {
+            "src": "cells_sim.v:6.20-6.21"
+          }
+        },
+        "Y": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "cells_sim.v:7.13-7.14"
+          }
+        }
+      }
+    },
+    "olmc_test": {
+      "attributes": {
+        "top": "00000000000000000000000000000001",
+        "src": "testcases/olmc_test.v:1.1-15.10"
+      },
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "A": {
+          "direction": "input",
+          "bits": [ 3 ]
+        },
+        "B": {
+          "direction": "input",
+          "bits": [ 4 ]
+        },
+        "AND": {
+          "direction": "output",
+          "bits": [ 5 ]
+        },
+        "NAND": {
+          "direction": "output",
+          "bits": [ 6 ]
+        },
+        "REG_AND": {
+          "direction": "output",
+          "bits": [ 7 ]
+        },
+        "REG_NAND": {
+          "direction": "output",
+          "bits": [ 8 ]
+        }
+      },
+      "cells": {
+        "$abc$98$auto$blifparse.cc:519:parse_blif$100": {
+          "hide_name": 1,
+          "type": "GAL_OLMC",
+          "parameters": {
+            "INVERTED": "1",
+            "REGISTERED": "0"
+          },
+          "attributes": {
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "techmaps/pla.v:37.6-40.5|techmaps/trivial_sop.v:12.11-12.43|techmaps/olmc_comb.v:28.5-33.4"
+          },
+          "port_directions": {
+            "A": "input",
+            "C": "input",
+            "E": "input",
+            "Y": "inout"
+          },
+          "connections": {
+            "A": [ 9 ],
+            "C": [ "x" ],
+            "E": [ "1" ],
+            "Y": [ 6 ]
+          }
+        },
+        "$abc$98$auto$blifparse.cc:519:parse_blif$99": {
+          "hide_name": 1,
+          "type": "GAL_SOP",
+          "parameters": {
+            "DEPTH": "00000000000000000000000000000001",
+            "TABLE": "1010",
+            "WIDTH": "00000000000000000000000000000010"
+          },
+          "attributes": {
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "techmaps/pla.v:37.6-40.5|techmaps/trivial_sop.v:20.6-23.5"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 10, 11 ],
+            "Y": [ 9 ]
+          }
+        },
+        "$auto$ff.cc:266:slice$93": {
+          "hide_name": 1,
+          "type": "GAL_OLMC",
+          "parameters": {
+            "INVERTED": "0",
+            "REGISTERED": "1"
+          },
+          "attributes": {
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "testcases/olmc_test.v:10.1-13.4|techmaps/olmc_seq.v:10.5-15.4"
+          },
+          "port_directions": {
+            "A": "input",
+            "C": "input",
+            "E": "input",
+            "Y": "inout"
+          },
+          "connections": {
+            "A": [ 9 ],
+            "C": [ 12 ],
+            "E": [ "1" ],
+            "Y": [ 7 ]
+          }
+        },
+        "$auto$ff.cc:266:slice$94": {
+          "hide_name": 1,
+          "type": "GAL_OLMC",
+          "parameters": {
+            "INVERTED": "0",
+            "REGISTERED": "1"
+          },
+          "attributes": {
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "testcases/olmc_test.v:10.1-13.4|techmaps/olmc_seq.v:10.5-15.4"
+          },
+          "port_directions": {
+            "A": "input",
+            "C": "input",
+            "E": "input",
+            "Y": "inout"
+          },
+          "connections": {
+            "A": [ 6 ],
+            "C": [ 12 ],
+            "E": [ "1" ],
+            "Y": [ 8 ]
+          }
+        },
+        "$iopadmap$olmc_test.A": {
+          "hide_name": 1,
+          "type": "GAL_INPUT",
+          "parameters": {
+          },
+          "attributes": {
+            "keep": "00000000000000000000000000000001"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "Y": [ 11 ]
+          }
+        },
+        "$iopadmap$olmc_test.AND": {
+          "hide_name": 1,
+          "type": "GAL_OLMC",
+          "parameters": {
+            "INVERTED": "0",
+            "REGISTERED": "0"
+          },
+          "attributes": {
+            "keep": "00000000000000000000000000000001",
+            "module_not_derived": "00000000000000000000000000000001",
+            "src": "techmaps/olmc_comb.v:10.5-15.4"
+          },
+          "port_directions": {
+            "A": "input",
+            "C": "input",
+            "E": "input",
+            "Y": "inout"
+          },
+          "connections": {
+            "A": [ 9 ],
+            "C": [ "x" ],
+            "E": [ "1" ],
+            "Y": [ 5 ]
+          }
+        },
+        "$iopadmap$olmc_test.B": {
+          "hide_name": 1,
+          "type": "GAL_INPUT",
+          "parameters": {
+          },
+          "attributes": {
+            "keep": "00000000000000000000000000000001"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 4 ],
+            "Y": [ 10 ]
+          }
+        },
+        "$iopadmap$olmc_test.clk": {
+          "hide_name": 1,
+          "type": "GAL_INPUT",
+          "parameters": {
+          },
+          "attributes": {
+            "keep": "00000000000000000000000000000001"
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 2 ],
+            "Y": [ 12 ]
+          }
+        }
+      },
+      "netnames": {
+        "$abc$98$iopadmap$A": {
+          "hide_name": 1,
+          "bits": [ 11 ],
+          "attributes": {
+          }
+        },
+        "$abc$98$iopadmap$B": {
+          "hide_name": 1,
+          "bits": [ 10 ],
+          "attributes": {
+          }
+        },
+        "$iopadmap$AND": {
+          "hide_name": 1,
+          "bits": [ 9 ],
+          "attributes": {
+          }
+        },
+        "$iopadmap$clk": {
+          "hide_name": 1,
+          "bits": [ 12 ],
+          "attributes": {
+          }
+        },
+        "A": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:3.12-3.13"
+          }
+        },
+        "AND": {
+          "hide_name": 0,
+          "bits": [ 5 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:4.8-4.11"
+          }
+        },
+        "B": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:3.15-3.16"
+          }
+        },
+        "NAND": {
+          "hide_name": 0,
+          "bits": [ 6 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:4.13-4.17"
+          }
+        },
+        "REG_AND": {
+          "hide_name": 0,
+          "bits": [ 7 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:5.12-5.19"
+          }
+        },
+        "REG_NAND": {
+          "hide_name": 0,
+          "bits": [ 8 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:5.21-5.29"
+          }
+        },
+        "clk": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "testcases/olmc_test.v:3.7-3.10"
+          }
+        }
+      }
+    }
+  }
+}

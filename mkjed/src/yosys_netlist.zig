@@ -3,9 +3,17 @@
 //! know the data structure of the cell types.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const json = std.json;
 
 const testing = std.testing;
+const assert = std.debug.assert;
+
+const JsonStringMap = json.ArrayHashMap([]const u8);
+
+// --------------------------------------------------------------------------------
+// String-to-int functions and tests
+// --------------------------------------------------------------------------------
 
 /// convert the yosys string-of-bits to a given integer type.
 /// Note that the lengths must be exact, i.e if a string is shorter than
@@ -57,7 +65,7 @@ test strtob {
 /// that must be manually freed.
 pub fn btostr(
     comptime T: type,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     val: T,
 ) ![]u8 {
     comptime {
@@ -91,6 +99,50 @@ test btostr {
     testing.allocator.free(actual);
 }
 
+// END string-bits functions
+
+// --------------------------------------------------------------------------------
+// JsonStringMap helper functions
+// These functions are used to operate on the JsonStringMap type, which is
+// a JSON-serializeable string-string map.
+// --------------------------------------------------------------------------------
+
+/// Reads a property from a JsonStringMap. the type can be a string, or an integer type.
+/// If it's an integer type, it will convert the string-of-bits to said integer using
+/// strtob. If the property does not exist, or it fails to parse with strtob,
+/// it will return null.
+pub fn readProperty(comptime T: type, map: JsonStringMap, prop: []const u8) ?T {
+    const val = map.map.get(prop) orelse return null;
+
+    if (T == []const u8) {
+        return val;
+    } else {
+        return strtob(T, val) catch null;
+    }
+}
+
+test readProperty {
+    const alloc = testing.allocator;
+    const j =
+        \\{
+        \\  "string": "value",
+        \\  "binary": "011011"
+        \\}
+    ;
+    const result = try json.parseFromSlice(JsonStringMap, alloc, j, .{});
+    defer result.deinit();
+
+    const map = result.value;
+    {
+        const prop = readProperty([]const u8, map, "string") orelse unreachable;
+        try testing.expectEqualStrings("value", prop);
+    }
+    {
+        const prop = readProperty(u8, map, "binary") orelse unreachable;
+        try testing.expectEqual(0b011011, prop);
+    }
+}
+
 /// Net type. In Yosys, nets are either a numeric value, or one of xz01
 /// which means that the input is fixed to a global or don't care.
 const Net = union(enum) {
@@ -117,13 +169,13 @@ const Net = union(enum) {
     }
 
     /// parse a net from json.
-    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Net {
-        const v: std.json.Value = try std.json.innerParse(std.json.Value, allocator, source, options);
+    pub fn jsonParse(allocator: Allocator, source: anytype, options: json.ParseOptions) !Net {
+        const v: json.Value = try json.innerParse(json.Value, allocator, source, options);
         return jsonParseFromValue(allocator, v, options);
     }
 
     /// parse net from json value
-    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !Net {
+    pub fn jsonParseFromValue(allocator: Allocator, source: json.Value, options: json.ParseOptions) !Net {
         _ = allocator;
         _ = options;
         return switch (source) {
@@ -161,37 +213,69 @@ test Net {
         const net, const j = t;
         var stream = std.io.fixedBufferStream(&buf);
 
-        try std.json.stringify(net, .{}, stream.writer());
+        try json.stringify(net, .{}, stream.writer());
         const serialized = stream.getWritten();
         try testing.expectEqualStrings(j, serialized);
 
-        const roundtrip = try std.json.parseFromSlice(Net, alloc, serialized, .{});
+        const roundtrip = try json.parseFromSlice(Net, alloc, serialized, .{});
         defer roundtrip.deinit();
         try testing.expectEqual(net, roundtrip.value);
     }
 }
 
+pub const BitVector = []const Net;
+
 /// Yosys netlist. has a creator string, which gives details
 /// on the yosys version. Contains a set of named modules.
 pub const Netlist = struct {
+    const Self = @This();
     creator: []const u8,
-    modules: std.StringHashMap(Module),
+    modules: json.ArrayHashMap(Module),
 
-    /// ensures invariants about the netlist
-    pub fn validate(self: *Netlist) !void {
-        // expect only one top module
-        //
-        _ = self;
+    /// Finds the top module of the given netlist.
+    pub fn findTopModule(self: *const Self) *Module {
+        // iterate through the modules, and attempt to readProperty "top"
+        // as a u32. if we find it, and it's >0, then return that module.
+        // else return null
+
+        const iter = self.modules.map.values();
+
+        for (iter) |*mod| {
+            const attr_top = readProperty(u32, mod.attributes, "top");
+            if (attr_top) |top_value| {
+                // I think this statement is true generally.
+                assert(top_value > 0);
+                return mod;
+            }
+        }
+
+        // if we don't have a top module, we're screwed.
+        @panic("unable to find top module");
     }
 };
+
+test Netlist {
+    // try loading a file from testcase.
+    const alloc = testing.allocator;
+    const example = "./testcases/synth_olmc_test.json";
+    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
+    defer alloc.free(file);
+
+    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    defer netlist.deinit();
+    {
+        const top_ptr = netlist.value.modules.map.getPtr("olmc_test");
+        try testing.expectEqual(top_ptr, netlist.value.findTopModule());
+    }
+}
 
 /// A module is an entire netlist consisting of cells (which are typically
 /// instances of other modules)
 pub const Module = struct {
-    attributes: std.StringHashMap([]const u8),
-    ports: std.StringHashMap(Port),
-    cells: std.StringHashMap(Cell),
-    netnames: std.StringHashMap(NetName),
+    attributes: JsonStringMap,
+    ports: json.ArrayHashMap(Port),
+    cells: json.ArrayHashMap(Cell),
+    netnames: json.ArrayHashMap(NetDetails),
 };
 
 /// A port direction. Ports attach to one or more nets.
@@ -207,7 +291,7 @@ pub const PortDirection = enum {
 pub const Port = struct {
     /// The direction of this port.
     direction: PortDirection,
-    bits: []const Net,
+    bits: BitVector,
     upto: u1 = 0,
     offset: i8 = 0,
 };
@@ -221,7 +305,7 @@ test Port {
             \\  "bits": [ 2 ]
             \\}
         ;
-        const result = try std.json.parseFromSlice(Port, alloc, j, .{});
+        const result = try json.parseFromSlice(Port, alloc, j, .{});
         defer result.deinit();
         const expected = Port{
             .direction = .input,
@@ -237,7 +321,7 @@ test Port {
             \\  "bits": [ 2, "x" ]
             \\}
         ;
-        const result = try std.json.parseFromSlice(Port, alloc, j, .{});
+        const result = try json.parseFromSlice(Port, alloc, j, .{});
         defer result.deinit();
         const expected = Port{
             .direction = .output,
@@ -248,26 +332,131 @@ test Port {
     }
 }
 
+/// Yosys Netlist Cell type.
 pub const Cell = struct {
     /// Cell type. Index into modules to find the root cell.
     type: []const u8,
     /// Parameters of this instance of the cell.
-    parameters: std.StringHashMap([]const u8),
+    parameters: JsonStringMap,
     /// misc attributes of the cell
-    ///
-    attributes: std.StringHashMap([]const u8),
+    attributes: JsonStringMap,
     /// Connections on ports of this cell.
-    connections: std.StringHashMap([]const Net),
+    connections: json.ArrayHashMap(BitVector),
+
+    const JsonRepr = struct {};
 };
 
 /// Internal net naming system. typically you won't need to access this.
-pub const NetName = struct {
+pub const NetDetails = struct {
     /// attributes include hdlname and src
-    attributes: std.StringHashMap([]const u8),
+    attributes: JsonStringMap,
     /// all of the bits that belong to this net.
-    bits: []const Net,
+    bits: BitVector,
     /// The ordering of this net.
     upto: u1 = 0,
     /// The offset???
     offset: i8 = 0,
 };
+
+/// Net-to-Cell lookup table.
+/// give a net, get an array of ( port, *Cell ).
+/// Can be used to "dance" with cell traversal. Cell -> Net -> NetGraph list -> Cell
+/// Can also be used to simply see every cell that uses a given net.
+pub const NetMap = struct {
+    const Self = @This();
+    const NetMember = struct { port: []const u8, cell: *const Cell };
+    const LookupTable = std.AutoHashMap(u32, std.ArrayList(*NetMember));
+    /// This arena stores the NetMember
+    arena: std.heap.ArenaAllocator,
+    /// this allocator is used when creating the hashmap/arraylists
+    gpa: Allocator,
+    /// the lookup table. You can use this directly.
+    lookup: std.AutoHashMap(u32, std.ArrayList(*NetMember)),
+
+    pub fn init(allocator: Allocator) !Self {
+        const arena = std.heap.ArenaAllocator.init(allocator);
+
+        return .{
+            .arena = arena,
+            .gpa = allocator,
+            .lookup = LookupTable.init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        // cleanup the arraylists
+        var it = self.lookup.valueIterator();
+        while (it.next()) |val| {
+            val.deinit();
+        }
+        // cleanup the *NetMember arena
+        self.arena.deinit();
+        // cleanup the lookup
+        self.lookup.deinit();
+    }
+
+    /// Add the module to the netgraph. This will map all of the used
+    /// nets.
+    pub fn addModule(self: *Self, mod: *const Module) !void {
+        var cells = mod.cells.map.iterator();
+
+        while (cells.next()) |entry| {
+            const cell = entry.value_ptr;
+            // iterate over the ports of the cell.
+            try self.addCell(cell);
+        }
+    }
+
+    /// Adds a single cell to the NetMap. Generally, you want
+    /// to call addModule.
+    pub fn addCell(self: *Self, cell: *const Cell) !void {
+        var ports = cell.connections.map.iterator();
+        while (ports.next()) |port| {
+            const port_name = port.key_ptr;
+            const port_nets = port.value_ptr.*;
+            // construct the NetUser
+            const netuser = try self.arena.allocator().create(NetMember);
+            netuser.port = port_name.*;
+            netuser.cell = cell;
+
+            for (port_nets) |net| {
+                if (net == .N) {
+                    const gop = try self.lookup.getOrPut(net.N);
+                    if (!gop.found_existing) {
+                        // create new arraylist
+                        gop.value_ptr.* = try std.ArrayList(*NetMember).initCapacity(self.gpa, 8);
+                    }
+                    try gop.value_ptr.append(netuser);
+                }
+            }
+        }
+    }
+};
+
+test NetMap {
+    const alloc = testing.allocator;
+    // This is all netlist setup
+    const example = "./testcases/synth_olmc_test.json";
+    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
+    defer alloc.free(file);
+    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    defer netlist.deinit();
+
+    // this is the actual test
+    var netmap = try NetMap.init(alloc);
+    defer netmap.deinit();
+    const top = netlist.value.findTopModule();
+    try netmap.addModule(top);
+    // this is an annoyingly hard read.
+    const cells = netmap.lookup.get(5) orelse unreachable;
+
+    // there should just be one OLMC on this net.
+    try testing.expectEqual(1, cells.items.len);
+    const net = cells.items[0];
+    try testing.expectEqualStrings("Y", net.port);
+
+    // check that it's the one we think it is.
+    const expected = top.cells.map.getPtr("$iopadmap$olmc_test.AND") orelse unreachable;
+    const actual = net.cell;
+    try testing.expectEqual(expected, actual);
+}
