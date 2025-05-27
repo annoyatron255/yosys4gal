@@ -284,5 +284,6 @@ test "writeJed" {
     try fmap.writeJed(output.writer(), .{});
 
     // skip the checksum, since it depends on the zig version.
+    // use slices, since we have the 0x02 and 0x03.
     try std.testing.expectEqualSlices(u8, expected_file, output.items[0 .. output.items.len - 4]);
 }

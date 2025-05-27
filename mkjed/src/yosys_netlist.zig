@@ -342,8 +342,6 @@ pub const Cell = struct {
     attributes: JsonStringMap,
     /// Connections on ports of this cell.
     connections: json.ArrayHashMap(BitVector),
-
-    const JsonRepr = struct {};
 };
 
 /// Internal net naming system. typically you won't need to access this.
