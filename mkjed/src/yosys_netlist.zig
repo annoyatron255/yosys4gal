@@ -237,7 +237,7 @@ pub const Netlist = struct {
     modules: json.ArrayHashMap(Module),
 
     /// Finds the top module of the given netlist.
-    pub fn findTopModule(self: *const Self) *Module {
+    pub fn findTopModule(self: Self) *Module {
         // iterate through the modules, and attempt to readProperty "top"
         // as a u32. if we find it, and it's >0, then return that module.
         // else return null
@@ -292,6 +292,8 @@ pub const PortDirection = enum {
     inout,
 };
 
+/// Module Port information. Note that this is different from
+/// the "port_directions" parameter of cells.
 pub const Port = struct {
     /// The direction of this port.
     direction: PortDirection,
@@ -346,6 +348,8 @@ pub const Cell = struct {
     attributes: JsonStringMap,
     /// Connections on ports of this cell.
     connections: json.ArrayHashMap(BitVector),
+
+    port_directions: json.ArrayHashMap(PortDirection),
 };
 
 /// Internal net naming system. typically you won't need to access this.
@@ -369,78 +373,118 @@ pub const NetDetails = struct {
 /// give a net, get an array of ( port, *Cell ).
 /// Can be used to "dance" with cell traversal. Cell -> Net -> NetGraph list -> Cell
 /// Can also be used to simply see every cell that uses a given net.
-pub const NetMap = struct {
-    const Self = @This();
-    const NetMember = struct { port: []const u8, cell: *const Cell };
-    const LookupTable = std.AutoHashMap(u32, std.ArrayList(*NetMember));
-    /// This arena stores the NetMember and is created using the main allocator.
-    arena: std.heap.ArenaAllocator,
-    /// this allocator is used when creating the hashmap/arraylists
-    gpa: Allocator,
-    /// the lookup table. You can use this directly.
-    lookup: LookupTable,
-
-    pub fn init(allocator: Allocator) !Self {
-        const arena = std.heap.ArenaAllocator.init(allocator);
-
-        return .{
-            .arena = arena,
-            .gpa = allocator,
-            .lookup = LookupTable.init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        // cleanup the arraylists
-        var it = self.lookup.valueIterator();
-        while (it.next()) |val| {
-            val.deinit();
+pub fn NetMap(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const LookupTable = std.AutoHashMap(u32, T);
+        gpa: Allocator,
+        lookup: LookupTable,
+        pub fn init(allocator: Allocator) !Self {
+            return .{
+                .gpa = allocator,
+                .lookup = LookupTable.init(allocator),
+            };
         }
-        // cleanup the *NetMember arena
-        self.arena.deinit();
-        // cleanup the lookup
-        self.lookup.deinit();
-    }
-
-    /// Add the module to the netgraph. This will map all of the used
-    /// nets.
-    pub fn addModule(self: *Self, mod: *const Module) !void {
-        var cells = mod.cells.map.iterator();
-
-        while (cells.next()) |entry| {
-            const cell = entry.value_ptr;
-            // iterate over the ports of the cell.
-            try self.addCell(cell);
+        pub fn deinit(self: *Self) void {
+            // cleanup the arraylists
+            var it = self.lookup.valueIterator();
+            while (it.next()) |val| {
+                val.deinit();
+            }
+            // cleanup the lookup
+            self.lookup.deinit();
         }
-    }
+    };
+}
 
-    /// Adds a single cell to the NetMap. Generally, you want
-    /// to call addModule.
-    pub fn addCell(self: *Self, cell: *const Cell) !void {
+/// Map a net to a list of objects, which typically contain information/references
+/// about elements in the netlist. T should be something like struct { cell: *const Cell }.
+/// If there's a guaranteed 1-1 mapping, use NetMap instead.
+pub fn NetMapMany(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const LookupTable = std.AutoHashMap(u32, std.ArrayList(T));
+
+        gpa: Allocator,
+        lookup: LookupTable,
+
+        pub fn init(allocator: Allocator) !Self {
+            return .{
+                .gpa = allocator,
+                .lookup = LookupTable.init(allocator),
+            };
+        }
+        pub fn deinit(self: *Self) void {
+            // cleanup the arraylists
+            var it = self.lookup.valueIterator();
+            while (it.next()) |val| {
+                val.deinit();
+            }
+            // cleanup the lookup
+            self.lookup.deinit();
+        }
+
+        /// Add the value to the net, creating the arraylist if necessary.
+        pub fn append(self: *Self, key: Net, value: T) !void {
+            if (key != .N) {
+                return error.InvalidNet;
+            }
+            const gop = try self.lookup.getOrPut(key.N);
+            // invariant: key is either null or non-empty arraylist.
+            // it can never be an empty arraylist.
+            if (!gop.found_existing) {
+                gop.value_ptr.* = try std.ArrayList(T).initCapacity(self.gpa, 8);
+            }
+            try gop.value_ptr.append(value);
+        }
+    };
+}
+
+/// NetCellMap is a mapping of a net to an array of cells. It is used to traverse quickly from
+/// Cell -> Net -> Cell -> etc.
+const NetCellMap = NetMapMany(NetCellMember);
+/// References a cell and a port name that the net uses. We include the port
+/// name and direction here to speed up filtering.
+const NetCellMember = struct {
+    cell: *const Cell,
+    port: []const u8,
+    direction: PortDirection,
+};
+
+/// Create a map that gives a list of cells when provided with a non-constant net.
+pub fn buildNetCellMap(allocator: Allocator, netlist: *const Netlist) !NetMapMany(NetCellMember) {
+    var map = try NetMapMany(NetCellMember).init(allocator);
+
+    const top = netlist.findTopModule();
+
+    var cells = top.cells.map.iterator();
+
+    while (cells.next()) |entry| {
+        const cell = entry.value_ptr;
+
         var ports = cell.connections.map.iterator();
         while (ports.next()) |port| {
-            const port_name = port.key_ptr;
+            const port_name = port.key_ptr.*;
             const port_nets = port.value_ptr.*;
-            // construct the NetUser
-            const netuser = try self.arena.allocator().create(NetMember);
-            netuser.port = port_name.*;
-            netuser.cell = cell;
+            // lookup the cell
+            const dir = cell.port_directions.map.get(port_name) orelse unreachable;
 
+            const binding: NetCellMember = .{
+                .cell = cell,
+                .port = port_name,
+                .direction = dir,
+            };
             for (port_nets) |net| {
                 if (net == .N) {
-                    const gop = try self.lookup.getOrPut(net.N);
-                    if (!gop.found_existing) {
-                        // create new arraylist
-                        gop.value_ptr.* = try std.ArrayList(*NetMember).initCapacity(self.gpa, 8);
-                    }
-                    try gop.value_ptr.append(netuser);
+                    try map.append(net, binding);
                 }
             }
         }
     }
-};
+    return map;
+}
 
-test NetMap {
+test buildNetCellMap {
     const alloc = testing.allocator;
     // This is all netlist setup
     const example = "./testcases/synth_olmc_test.json";
@@ -450,10 +494,8 @@ test NetMap {
     defer netlist.deinit();
 
     // this is the actual test
-    var netmap = try NetMap.init(alloc);
+    var netmap = try buildNetCellMap(alloc, &netlist.value);
     defer netmap.deinit();
-    const top = netlist.value.findTopModule();
-    try netmap.addModule(top);
     // this is an annoyingly fragile test.
     const cells = netmap.lookup.get(5) orelse unreachable;
 
@@ -462,8 +504,11 @@ test NetMap {
     const net = cells.items[0];
     // it should be the output port
     try testing.expectEqualStrings("Y", net.port);
+    // it should have the inout direction
+    try testing.expectEqual(.inout, net.direction);
 
     // check that it's the one we think it is.
+    const top = netlist.value.findTopModule();
     const expected = top.cells.map.getPtr("$iopadmap$olmc_test.AND") orelse unreachable;
     const actual = net.cell;
     try testing.expectEqual(expected, actual);

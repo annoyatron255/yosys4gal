@@ -53,7 +53,7 @@ const GAL16V8Spec: ChipSpec = .{
     .olmc_xor_address = 2048,
     .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
     .olmc_row_sizes = &[_]u32{8} ** 8,
-    .regisered_global_oe = true,
+    .registered_global_oe = true,
 };
 
 // The Pin type category is an enum with values in the shape of p<uint>. They
@@ -191,7 +191,7 @@ pub fn PTerm(spec: *const ChipSpec) type {
             return &fuses;
         }
 
-        pub fn format(self: *const Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             _ = fmt;
 
             for (self.entries) |entry| {
@@ -272,7 +272,7 @@ pub fn SOPTerm(spec: *const ChipSpec) type {
             };
         }
 
-        pub fn format(self: *const Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Self, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             _ = fmt;
             var first = true;
             for (self.products) |prod| {
@@ -320,7 +320,7 @@ pub fn OLMC(spec: *const ChipSpec) type {
         }
 
         ///writes the OLMC to the fuse map.
-        pub fn synthesize(self: *const Self, fmap: *FuseMap, index: usize) !void {
+        pub fn synthesize(self: Self, fmap: *FuseMap, index: usize) !void {
             try fmap.set(spec.olmc_ac1_address + index, self.comb);
             try fmap.set(spec.olmc_xor_address + index, self.active_high);
             var base = spec.olmc_block_address[index];
