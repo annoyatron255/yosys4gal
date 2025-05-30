@@ -403,7 +403,7 @@ pub fn NetMap(comptime T: type) type {
 pub fn NetMapMany(comptime T: type) type {
     return struct {
         const Self = @This();
-        const LookupTable = std.AutoHashMap(u32, std.ArrayList(T));
+        const LookupTable = std.AutoArrayHashMap(u32, std.ArrayList(T));
 
         gpa: Allocator,
         lookup: LookupTable,
@@ -416,8 +416,8 @@ pub fn NetMapMany(comptime T: type) type {
         }
         pub fn deinit(self: *Self) void {
             // cleanup the arraylists
-            var it = self.lookup.valueIterator();
-            while (it.next()) |val| {
+            const vals = self.lookup.values();
+            for (vals) |val| {
                 val.deinit();
             }
             // cleanup the lookup
@@ -442,22 +442,20 @@ pub fn NetMapMany(comptime T: type) type {
 
 /// NetCellMap is a mapping of a net to an array of cells. It is used to traverse quickly from
 /// Cell -> Net -> Cell -> etc.
-const NetCellMap = NetMapMany(NetCellMember);
+pub const NetCellMap = NetMapMany(NetCellMember);
 /// References a cell and a port name that the net uses. We include the port
 /// name and direction here to speed up filtering.
-const NetCellMember = struct {
+pub const NetCellMember = struct {
     cell: *const Cell,
     port: []const u8,
     direction: PortDirection,
 };
 
 /// Create a map that gives a list of cells when provided with a non-constant net.
-pub fn buildNetCellMap(allocator: Allocator, netlist: *const Netlist) !NetMapMany(NetCellMember) {
-    var map = try NetMapMany(NetCellMember).init(allocator);
+pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap {
+    var map = try NetCellMap.init(allocator);
 
-    const top = netlist.findTopModule();
-
-    var cells = top.cells.map.iterator();
+    var cells = module.cells.map.iterator();
 
     while (cells.next()) |entry| {
         const cell = entry.value_ptr;
@@ -493,8 +491,10 @@ test buildNetCellMap {
     const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
     defer netlist.deinit();
 
+    const top = netlist.value.findTopModule();
+
     // this is the actual test
-    var netmap = try buildNetCellMap(alloc, &netlist.value);
+    var netmap = try buildNetCellMap(alloc, top);
     defer netmap.deinit();
     // this is an annoyingly fragile test.
     const cells = netmap.lookup.get(5) orelse unreachable;
@@ -508,8 +508,45 @@ test buildNetCellMap {
     try testing.expectEqual(.inout, net.direction);
 
     // check that it's the one we think it is.
-    const top = netlist.value.findTopModule();
     const expected = top.cells.map.getPtr("$iopadmap$olmc_test.AND") orelse unreachable;
     const actual = net.cell;
     try testing.expectEqual(expected, actual);
+}
+
+/// Mapping of nets to ports. a net can belong to more than one port?
+pub const NetPortMap = NetMapMany(NetPortMember);
+
+pub const NetPortMember = struct { port: *Port, direction: PortDirection };
+
+pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap {
+    var map = try NetPortMap.init(allocator);
+    var ports = module.ports.map.iterator();
+
+    while (ports.next()) |entry| {
+        const port = entry.value_ptr;
+
+        const member: NetPortMember = .{ .direction = port.direction, .port = port };
+
+        for (port.bits) |net| {
+            // I don't see how a module could have a hard-coded net value as a port.
+            assert(net == .N);
+            try map.append(net, member);
+        }
+    }
+    return map;
+}
+
+test buildNetPortMap {
+    const alloc = testing.allocator;
+    // This is all netlist setup
+    const example = "./testcases/synth_olmc_test.json";
+    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
+    defer alloc.free(file);
+    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    defer netlist.deinit();
+
+    const top = netlist.value.findTopModule();
+
+    var map = try buildNetPortMap(alloc, top);
+    defer map.deinit();
 }

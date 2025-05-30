@@ -99,6 +99,14 @@ pub const PinConstraints = struct {
         }
     }
 
+    pub fn parseSlice(self: *PinConstraints, data: []const u8) !void {
+        const tokstream = std.mem.tokenizeScalar(u8, data, '\n');
+
+        while (tokstream.next()) |line| {
+            try self.parseLine(line);
+        }
+    }
+
     /// Retrieve a pin constraint if it exists.
     pub fn get(self: *PinConstraints, net: []const u8) ?u32 {
         return self.constraints.get(net);

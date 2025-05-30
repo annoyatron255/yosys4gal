@@ -8,6 +8,8 @@ pub const yosys_netlist = @import("./yosys_netlist.zig");
 pub const pcf = @import("./pcf.zig");
 pub const jed = @import("./jed.zig");
 pub const xv8 = @import("./gal_xV8.zig");
+pub const bimap = @import("./bimap.zig");
+pub const techmap = @import("./gal_techmap.zig");
 
 pub export fn add(a: i32, b: i32) i32 {
     return a + b;
