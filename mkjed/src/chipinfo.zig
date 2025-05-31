@@ -3,21 +3,31 @@
 const std = @import("std");
 const testing = std.testing;
 const assert = std.debug.assert;
+
+/// Enum for chip types.
+pub const ChipType = enum {
+    gal16v8,
+    gal22v10,
+};
 /// Definitions for a chip.
 /// This is used by many of the comptime-generated structs
 /// to create instances of these structs for a specific chip.
 pub const ChipSpec = struct {
-    ac0_addr: u32,
-    syn_addr: u32,
-    /// Valid input pin type
-    pin_type: type,
+    const Self = @This();
+    /// TOTAL size of the main fusemap array.
+    /// ex 16v8 has 8 OLMCs with 8 rows = 64
+    num_rows: u32,
+    /// Columns of the main fusemap array.
+    /// ex 16v8 has 16 inputs, so 32
+    /// (don't forget inversions)
+    num_cols: u32,
+
     /// total number of fuses for this chip.
     fusemap_size: usize,
 
     /// Starting fuse index for each OLMC rows
     /// Index using OLMC array position.
-    olmc_block_address: []const u32,
-    olmc_row_sizes: []const u32,
+    olmc_row: []const u32,
 
     /// starting fuse address of the xor bits for OLMCs
     /// Use the index in the OLMC array to increment
@@ -29,18 +39,24 @@ pub const ChipSpec = struct {
     /// If, in registered mode, we have a global OE pin, or
     /// OE terms for each OLMC. If the latter, the total size
     /// of the "logic" terms is row_size - 1 for registered
+    /// mainly for 22v10.
     registered_global_oe: bool,
+
+    pub fn get_olmc_baseaddr(self: Self, index: usize) usize {
+        const row = self.olmc_row[index];
+        return row * self.num_cols;
+    }
 };
 
 /// Registered-mode GAL16V8.
 pub const GAL16V8Spec: ChipSpec = .{
     .ac0_addr = 2193,
     .syn_addr = 2192,
-    .pin_type = Pin16V8,
     .fusemap_size = 2194,
     .olmc_ac1_address = 2120,
     .olmc_xor_address = 2048,
-    .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
+    // .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
+    .olmc_row = &.{ 0, 8, 16, 24, 32, 40, 48, 56 },
     .olmc_row_sizes = &[_]u32{8} ** 8,
     .registered_global_oe = true,
 };

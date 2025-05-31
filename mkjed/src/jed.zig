@@ -1,6 +1,6 @@
 //! JED file (fuse map) format support.
 //! Good references:
-//! https://git.redump.net/mame/tree/src/tools/jedutil.cpp MAME
+//! https://git.redump.net/mame/tree/src/tools/jedutil.cpp
 //! https://k1.spdns.de/Develop/Projects/GalAsm/info/galer/jedecfile.html
 //!
 //! The general usage is that a higher-level construct should represent
@@ -99,9 +99,9 @@ pub const jedOptions = struct {
 pub const FuseMap = struct {
     allocator: std.mem.Allocator,
     /// Number of fuses in the file
-    qf: u16,
+    qf: usize,
     /// Number of pins on the device
-    qp: u16,
+    qp: usize,
     /// What the default (unspecified) fuse state should be
     default_state: bool = false,
 
@@ -110,9 +110,11 @@ pub const FuseMap = struct {
 
     /// the actual fuses.
     fuses: []bool,
+    /// Cursor for chaining writes.
+    cursor: usize = 0,
 
     /// Initializes a new fuse map
-    pub fn init(allocator: std.mem.Allocator, fuses: u16, pins: u16, default_state: bool) !FuseMap {
+    pub fn init(allocator: std.mem.Allocator, fuses: usize, pins: usize, default_state: bool) !FuseMap {
         const fusemap: []bool = try allocator.alloc(bool, fuses);
         errdefer allocator.free(fusemap);
         @memset(fusemap, default_state);
@@ -131,7 +133,7 @@ pub const FuseMap = struct {
     }
 
     /// Set the fusemap bit to the provided value
-    pub fn set(self: *FuseMap, fuse: u16, value: bool) !void {
+    pub fn set(self: *FuseMap, fuse: usize, value: bool) !void {
         if (fuse >= self.qf) {
             return error.OutOfBounds;
         }
@@ -143,12 +145,25 @@ pub const FuseMap = struct {
     /// `to_fuses` function or similar which will give a bare configuration
     /// then you can use that plus the offset for that block to write the
     /// instance to the map.
-    pub fn setSlice(self: *FuseMap, start: u16, data: []const bool) !void {
+    pub fn setSlice(self: *FuseMap, start: usize, data: []const bool) !void {
         // bounds check.
         if (start + data.len > self.qf) {
             return error.OutOfBounds;
         }
         @memcpy(self.fuses[start..], data);
+    }
+
+    pub fn setCursor(self: *FuseMap, pos: usize) void {
+        self.cursor = pos;
+    }
+    /// Writes a bit, advancing the cursor
+    pub fn stream(self: *FuseMap, value: bool) !void {
+        try self.set(self.cursor, value);
+        self.cursor += 1;
+    }
+    pub fn streamSlice(self: *FuseMap, data: []const bool) !void {
+        try self.setSlice(self.cursor, data);
+        self.cursor += data.len;
     }
 
     /// Compute the checksum of the fuses.
