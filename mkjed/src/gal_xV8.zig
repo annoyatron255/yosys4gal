@@ -16,38 +16,35 @@ const FuseMap = jed.FuseMap;
 const chipinfo = @import("./chipinfo.zig");
 const ChipSpec = chipinfo.ChipSpec;
 
-pub const Pin = struct {
-    pin: u32,
-    inv: bool,
+pub const Pin = struct { pin: u32, inverted: bool = false };
+
+pub const SopTerm = struct {
+    const Self = @This();
+    /// how "long" each row is i.e number of columns.
+
+    const pinRow = []?Pin;
+
+    pins: []pinRow,
+
+    pub fn init(allocator: Allocator, width: u32) Self {
+        const pins = allocator.alloc(pinRow, width);
+        @memset(pins, emptyRow);
+        return .{
+            .pins = pins,
+        };
+    }
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        allocator.free(self.pins);
+    }
+
+    pub fn clear(self: *Self) void {
+        @memset(self.pins, emptyRow);
+    }
+
+    /// sets the pin for a given row. returns true if it was added
+    /// or false if an existing pin is already present.
+    pub fn set(self: *Self, row: u32, pin: Pin) bool {}
 };
-pub fn SopTerm(spec: *const ChipSpec) type {
-    chipinfo.validatePinEnum(spec.pin_type);
-    return struct {
-        const Self = @This();
-        /// how "long" each row is i.e number of columns.
-        const depth = std.meta.fields(spec.pin_type).len;
-
-        const pinRow = [depth]?Pin;
-        const emptyRow: pinRow = [_]?Pin{null} ** depth;
-
-        pins: []pinRow,
-
-        pub fn init(allocator: Allocator, width: u32) Self {
-            const pins = allocator.alloc(pinRow, width);
-            @memset(pins, emptyRow);
-            return .{
-                .pins = pins,
-            };
-        }
-        pub fn deinit(self: *Self, allocator: Allocator) void {
-            allocator.free(self.pins);
-        }
-
-        pub fn clear(self: *Self) void {
-            @memset(self.pins, emptyRow);
-        }
-    };
-}
 /// PTerm is a product term. It contains a list of pins, which are then AND'ed together.
 /// OLMCs will take an array of PTerms and OR them together to get the final result of
 /// the logic array.
