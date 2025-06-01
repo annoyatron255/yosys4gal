@@ -6,9 +6,20 @@ const assert = std.debug.assert;
 
 /// Enum for chip types.
 pub const ChipType = enum {
+    const Self = @This();
     gal16v8,
     gal22v10,
+
+    pub fn getSpec(self: Self) *ChipSpec {
+        return switch (self) {
+            .gal16v8 => &GAL16V8Spec,
+            .gal22v10 => &GAL22V10Spec,
+        };
+    }
 };
+
+pub const Pin = enum(u32) { _ };
+
 /// Definitions for a chip.
 /// This is used by many of the comptime-generated structs
 /// to create instances of these structs for a specific chip.
@@ -17,10 +28,17 @@ pub const ChipSpec = struct {
     /// TOTAL size of the main fusemap array.
     /// ex 16v8 has 8 OLMCs with 8 rows = 64
     num_rows: u32,
+
     /// Columns of the main fusemap array.
     /// ex 16v8 has 16 inputs, so 32
     /// (don't forget inversions)
     num_cols: u32,
+
+    /// number of pins on the chip.
+    num_pins: u32,
+
+    /// List of valid pin numbers.
+    valid_pins: []const Pin,
 
     /// total number of fuses for this chip.
     fusemap_size: usize,
@@ -28,37 +46,57 @@ pub const ChipSpec = struct {
     /// Starting fuse index for each OLMC rows
     /// Index using OLMC array position.
     olmc_row: []const u32,
-
-    /// starting fuse address of the xor bits for OLMCs
-    /// Use the index in the OLMC array to increment
-    olmc_xor_address: u32,
-    /// starting fuse address of the ac1 bits for OLMCs.
-    /// Use the index in the OLMC array to increment
-    olmc_ac1_address: u32,
+    /// size of each olmc in rows.
+    olmc_row_sizes: []const u32,
+    /// Pin numbers for each olmc
+    olmc_pins: []const Pin,
 
     /// If, in registered mode, we have a global OE pin, or
     /// OE terms for each OLMC. If the latter, the total size
     /// of the "logic" terms is row_size - 1 for registered
     /// mainly for 22v10.
     registered_global_oe: bool,
+    /// if the chip has a ptd line.
+    has_ptd: bool,
 
-    pub fn get_olmc_baseaddr(self: Self, index: usize) usize {
+    pub fn getOlmcBaseAddr(self: Self, index: usize) usize {
         const row = self.olmc_row[index];
         return row * self.num_cols;
     }
 };
 
+/// internal helper to ensure invariants
+fn validate(spec: ChipSpec) !void {
+    try testing.expectEqual(spec.num_pins, spec.valid_pins.len);
+    try testing.expectEqual(spec.olmc_row.len, spec.olmc_row_sizes.len);
+    try testing.expectEqual(spec.olmc_row.len, spec.olmc_pins.len);
+}
+
 /// Registered-mode GAL16V8.
-pub const GAL16V8Spec: ChipSpec = .{
-    .ac0_addr = 2193,
-    .syn_addr = 2192,
+pub const GAL16V8Spec = ChipSpec{
+    .num_cols = 32,
+    .num_rows = 64,
     .fusemap_size = 2194,
-    .olmc_ac1_address = 2120,
-    .olmc_xor_address = 2048,
     // .olmc_block_address = &.{ 0, 256, 512, 768, 1024, 1280, 1536, 1792 },
     .olmc_row = &.{ 0, 8, 16, 24, 32, 40, 48, 56 },
     .olmc_row_sizes = &[_]u32{8} ** 8,
+    .olmc_pins = &.{ 19, 18, 17, 16, 15, 14, 13, 12 },
     .registered_global_oe = true,
+    .has_ptd = true,
+};
+
+test "gal16v8 baseaddr" {
+    try validate(GAL16V8Spec);
+    try testing.expectEqual(0, GAL16V8Spec.getOlmcBaseAddr(0));
+    try testing.expectEqual(256, GAL16V8Spec.getOlmcBaseAddr(1));
+}
+
+pub const GAL22V10Spec = ChipSpec{
+    .fusemap_size = 5892,
+    .olmc_row = &.{ 1, 10, 21, 34, 49, 66, 83, 98, 111, 122 },
+    .olmc_row_sizes = &.{ 9, 11, 13, 15, 17, 17, 15, 13, 11, 9 },
+    .registered_global_oe = false,
+    .has_ptd = false,
 };
 
 // The Pin type category is an enum with values in the shape of p<uint>. They

@@ -153,18 +153,21 @@ pub const FuseMap = struct {
         @memcpy(self.fuses[start..], data);
     }
 
-    pub fn setCursor(self: *FuseMap, pos: usize) void {
-        self.cursor = pos;
-    }
-    /// Writes a bit, advancing the cursor
-    pub fn stream(self: *FuseMap, value: bool) !void {
-        try self.set(self.cursor, value);
-        self.cursor += 1;
-    }
-    pub fn streamSlice(self: *FuseMap, data: []const bool) !void {
-        try self.setSlice(self.cursor, data);
-        self.cursor += data.len;
-    }
+    // pub fn setCursor(self: *FuseMap, pos: usize) void {
+    //     self.cursor = pos;
+    // }
+    // pub fn getCursor(self: *FuseMap) usize {
+    //     return self.cursor;
+    // }
+    // /// Writes a bit, advancing the cursor
+    // pub fn stream(self: *FuseMap, value: bool) !void {
+    //     try self.set(self.cursor, value);
+    //     self.cursor += 1;
+    // }
+    // pub fn streamSlice(self: *FuseMap, data: []const bool) !void {
+    //     try self.setSlice(self.cursor, data);
+    //     self.cursor += data.len;
+    // }
 
     /// Compute the checksum of the fuses.
     fn computeChecksum(self: *FuseMap) u16 {

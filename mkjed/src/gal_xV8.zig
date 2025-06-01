@@ -10,41 +10,18 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const ArenaAllocator = std.heap.ArenaAllocator;
 
 const Array2D = @import("array2d.zig").Array2D;
 const jed = @import("jed.zig");
 const FuseMap = jed.FuseMap;
 const chipinfo = @import("./chipinfo.zig");
-const ChipSpec = chipinfo.ChipSpec;
+const ChipType = chipinfo.ChipType;
 
 pub const Pin = struct { pin: u32, inverted: bool = false };
 
 /// Represents a SOP element that feeds into an OLMC.
-pub const SopTerm = struct {
-    const Self = @This();
-
-    data: Array2D(bool),
-
-    pub fn init(allocator: Allocator, width: usize, depth: usize) Self {
-        return .{
-            .data = .initFilled(allocator, width, depth, true),
-        };
-    }
-    pub fn deinit(self: *Self) void {
-        self.data.deinit();
-    }
-    pub fn synthesize(self: *Self, fmap: *FuseMap) void {
-        fmap.streamSlice(self.data.data);
-    }
-
-    pub fn set(self: *Self, row: usize, col: usize) void {
-        self.data.set(row, col, false);
-    }
-    pub fn clear(self: *Self) void {
-        self.data.fill(true);
-    }
-};
-test SopTerm {}
+pub const SopTerm = Array2D(bool);
 
 pub const OLMC = struct {
     const Self = @This();
@@ -60,23 +37,6 @@ pub const OLMC = struct {
     /// Note that the combinational mode uses the first term as the OE
     comb: bool = false,
 
-    ///writes the OLMC to the fuse map.
-    pub fn synthesize(self: Self, fmap: *FuseMap, chip: *const ChipSpec) !void {
-        // FIXME: get index from output pin
-        const index = 0;
-        try fmap.set(chip.olmc_ac1_address + index, self.comb);
-        try fmap.set(chip.olmc_xor_address + index, self.active_high);
-        var base = chip.olmc_block_address[index];
-        if (self.tristate) |tri| {
-            tri.synthesize(fmap);
-            base += tri.data.cols;
-        }
-
-        if (self.output) |out| {
-            out.synthesize(fmap);
-        }
-    }
-
     /// set the OE term to the AND of the given pins
     pub fn set_oe_term(self: *Self, sop: *SopTerm) !void {
         // a oe term is one product.
@@ -90,21 +50,96 @@ pub const OLMC = struct {
 
 test OLMC {}
 
+/// represents the active state of a gal.
 pub const GAL = struct {
     const Self = @This();
-    chip: *ChipSpec,
+    arena: ArenaAllocator,
+    chip: ChipType,
     olmcs: []OLMC,
-    pt: []bool,
+    pt: ?[]bool = null,
     syn: bool,
     ac0: bool,
 
+    pub fn init(allocator: Allocator, chip: ChipType) !Self {
+        const arena = ArenaAllocator.init(allocator);
+        const spec = chip.getSpec();
+        const olmcs = arena.allocator().alloc(OLMC, spec.olmc_row.len);
+
+        const result: Self = .{
+            .arena = arena,
+            .chip = chip,
+            .olmcs = olmcs,
+            .ac0 = false,
+            .syn = false,
+        };
+        // use registered mode on both chips
+        switch (chip) {
+            .gal22v10 => {
+                // do nothing
+            },
+            .gal16v8 => {
+                result.ac0 = true;
+                result.syn = false;
+            },
+        }
+    }
+
+    /// Attach a sop to a given OLMC. Will error if the sop is too big.
+    /// the SOP is copied and then owned by this struct.
+    pub fn bindSop(self: *Self, olmc: usize, sop: *SopTerm) !void {
+        // check if the given sop is too large for the olmc index.
+
+        // TODO: adjust size limit based on combinational or registered.
+        const spec = self.chip.getSpec();
+        var size = spec.olmc_row_sizes[olmc];
+        // if we have local OE in registered mode
+        if (!spec.registered_global_oe or self.olmcs[olmc].comb) {
+            size -= 1;
+        }
+        if (sop.rows > size) {
+            return error.TermTooLarge;
+        }
+        // copy the term, attach it to the olmc
+    }
+
+    pub fn setOETerm(self: *Self, olmc_idx: usize, oe: *SopTerm) !void {
+        const spec = self.chip.getSpec();
+        // conditions where we can do this:
+        // - gal22v10 always
+        // - gal xv8 if the olmc is comb.
+        const olmc = self.olmcs[olmc_idx];
+        if (!olmc.comb and spec.registered_global_oe) {
+            return error.Invalid;
+        }
+        olmc.set_oe_term(oe);
+    }
+
     pub fn synthesize(self: *Self, fmap: *FuseMap) void {
+        const spec = self.chip.getSpec();
         assert(fmap.qf == self.chip.fusemap_size);
 
+        // start with the output fuse maps.
         for (self.olmcs, 0..) |olmc, idx| {
-            const base = self.chip.get_olmc_baseaddr(idx);
-            assert(olmc.output);
-            olmc.synthesize(fmap, base);
+            var base = spec.getOlmcBaseAddr(idx);
+            fmap.setCursor(base);
+            if (olmc.tristate) |tri| {
+                assert(olmc.output);
+                assert(tri.data.items.len == spec.num_cols);
+                assert(tri.rows == 1);
+                assert(tri.cols == spec.num_cols);
+                fmap.streamSlice(tri.data.items);
+                base += tri.data.items.len;
+            }
+            if (olmc.output) |out| {
+                // test that the output fits
+                const maxsize = self.chip.olmc_row_sizes[idx];
+                if (out.rows > maxsize) {
+                    // hmm
+                    @panic("row2big");
+                }
+                fmap.streamSlice(out.data.items);
+                base += out.data.items.len;
+            }
         }
     }
 };
