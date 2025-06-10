@@ -18,15 +18,12 @@ const FuseMap = jed.FuseMap;
 const chipinfo = @import("./chipinfo.zig");
 const ChipType = chipinfo.ChipType;
 
-pub const Pin = struct { pin: u32, inverted: bool = false };
-
 /// Represents a SOP element that feeds into an OLMC.
 pub const SopTerm = Array2D(bool);
 
+/// Represents an OLMC
 pub const OLMC = struct {
     const Self = @This();
-    /// the pin that this OLMC drives.
-    output_pin: usize,
     /// The rows for the OLMC terms. Supports mixed-size rows (22v10)
     output: ?*SopTerm = null,
 
@@ -48,8 +45,6 @@ pub const OLMC = struct {
     }
 };
 
-test OLMC {}
-
 /// represents the active state of a gal.
 pub const GAL = struct {
     const Self = @This();
@@ -60,12 +55,14 @@ pub const GAL = struct {
     syn: bool,
     ac0: bool,
 
+    /// Create a GAL representation of the given chip.
     pub fn init(allocator: Allocator, chip: ChipType) !Self {
-        const arena = ArenaAllocator.init(allocator);
+        var arena = ArenaAllocator.init(allocator);
         const spec = chip.getSpec();
-        const olmcs = arena.allocator().alloc(OLMC, spec.olmc_row.len);
+        const olmcs = try arena.allocator().alloc(OLMC, spec.olmc_row.len);
+        @memset(olmcs, .{});
 
-        const result: Self = .{
+        var result: Self = .{
             .arena = arena,
             .chip = chip,
             .olmcs = olmcs,
@@ -74,35 +71,71 @@ pub const GAL = struct {
         };
         // use registered mode on both chips
         switch (chip) {
-            .gal22v10 => {
-                // do nothing
-            },
+            // .gal22v10 => {
+            //     // do nothing
+            // },
             .gal16v8 => {
                 result.ac0 = true;
                 result.syn = false;
+                // allocate ptd
+                result.pt = try arena.allocator().alloc(bool, 64);
             },
         }
+        return result;
     }
 
-    /// Attach a sop to a given OLMC. Will error if the sop is too big.
-    /// the SOP is copied and then owned by this struct.
-    pub fn bindSop(self: *Self, olmc: usize, sop: *SopTerm) !void {
-        // check if the given sop is too large for the olmc index.
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
+    }
 
-        // TODO: adjust size limit based on combinational or registered.
+    /// Returns the SOP for a given olmc. When first called for an OLMC,
+    /// it will create the SopTerm. Afterwards, it will return the same SopTerm.
+    /// during the first call, `comb` is used to indicate if the OLMC is combinational
+    /// or registered. When called again, it is an error to give a different value for `comb`.
+    pub fn getSop(self: *Self, olmc_idx: usize, comb: bool) !*SopTerm {
         const spec = self.chip.getSpec();
-        var size = spec.olmc_row_sizes[olmc];
-        // if we have local OE in registered mode
-        if (!spec.registered_global_oe or self.olmcs[olmc].comb) {
-            size -= 1;
+        const olmc = &self.olmcs[olmc_idx];
+        if (olmc.output) |existing| {
+            if (comb != olmc.comb) {
+                return error.ArgumentError;
+            }
+            return existing;
         }
-        if (sop.rows > size) {
-            return error.TermTooLarge;
-        }
-        // copy the term, attach it to the olmc
+        // it doesn't exist, allocate a new one on our arena.
+        olmc.comb = comb;
+        const newsop: *SopTerm = try self.arena.allocator().create(SopTerm);
+        const rows: usize = if (comb) 7 else 8;
+        newsop.* = try SopTerm.initSize(self.arena.allocator(), rows, spec.num_cols);
+        olmc.output = newsop;
+        return newsop;
     }
 
-    pub fn setOETerm(self: *Self, olmc_idx: usize, oe: *SopTerm) !void {
+    /// Get an OLMC using the output pin rather than the raw index.
+    pub fn getSopPin(self: *Self, pin: chipinfo.Pin, comb: bool) !*SopTerm {
+        // convert the pin to the olmc index.
+        const spec = self.chip.getSpec();
+        const idx = spec.getOlmcIdx(pin);
+        if (idx) |i| {
+            return self.getSop(i, comb);
+        }
+        return error.InvalidPin;
+    }
+    pub fn getOETerm(self: *Self, olmc_idx: usize) !*SopTerm {
+        const spec = self.chip.getSpec();
+        const olmc = &self.olmcs[olmc_idx];
+        if (!olmc.comb) {
+            return error.InvalidMode;
+        }
+        if (olmc.tristate) |existing| {
+            return existing;
+        }
+        const new_oe: *SopTerm = try self.arena.allocator().create(SopTerm);
+        new_oe.* = try SopTerm.initSize(self.arena.allocator(), 1, spec.num_cols);
+        olmc.tristate = new_oe;
+        return new_oe;
+    }
+
+    pub fn setOETerm(self: *Self, olmc_idx: usize, oe: SopTerm) !void {
         const spec = self.chip.getSpec();
         // conditions where we can do this:
         // - gal22v10 always
@@ -111,35 +144,127 @@ pub const GAL = struct {
         if (!olmc.comb and spec.registered_global_oe) {
             return error.Invalid;
         }
-        olmc.set_oe_term(oe);
+
+        const term = try oe.clone(self.arena.allocator());
+        olmc.set_oe_term(term);
     }
 
-    pub fn synthesize(self: *Self, fmap: *FuseMap) void {
+    pub fn synthesize(self: *Self, fmap: *FuseMap) !void {
         const spec = self.chip.getSpec();
-        assert(fmap.qf == self.chip.fusemap_size);
+        assert(fmap.qf == spec.fusemap_size);
 
         // start with the output fuse maps.
         for (self.olmcs, 0..) |olmc, idx| {
-            var base = spec.getOlmcBaseAddr(idx);
-            fmap.setCursor(base);
-            if (olmc.tristate) |tri| {
-                assert(olmc.output);
-                assert(tri.data.items.len == spec.num_cols);
-                assert(tri.rows == 1);
-                assert(tri.cols == spec.num_cols);
-                fmap.streamSlice(tri.data.items);
-                base += tri.data.items.len;
+            var base: usize = spec.getOlmcBaseAddr(idx);
+            // if we're a combinational olmc, OR we're a gal22v10
+            // and have local tristate in registered mode, we have
+            // to do this.
+            if (olmc.comb or !spec.registered_global_oe) {
+                // tristate row. write one if it exists, else
+                // bump the base out.
+                if (olmc.tristate) |tri| {
+                    assert(olmc.output != null);
+                    assert(tri.data.items.len == spec.num_cols);
+                    assert(tri.rows == 1);
+                    assert(tri.cols == spec.num_cols);
+                    try fmap.setSlice(base, tri.data.items);
+                    base += tri.data.items.len;
+                } else {
+                    base += spec.num_cols;
+                }
+            } else {
+                // we're a gall16v8 in registered mode, we shouldn't have
+                // a tristate block.
+                assert(olmc.tristate == null);
             }
+
             if (olmc.output) |out| {
                 // test that the output fits
-                const maxsize = self.chip.olmc_row_sizes[idx];
-                if (out.rows > maxsize) {
-                    // hmm
-                    @panic("row2big");
-                }
-                fmap.streamSlice(out.data.items);
+                const maxsize = spec.olmc_row_sizes[idx];
+                assert(out.rows <= maxsize);
+                try fmap.setSlice(base, out.data.items);
                 base += out.data.items.len;
             }
         }
+        // in 16v8, it's then olmc xors,
+        // user signature,
+        // ac1, ptd, syn, ac0.
+        // write olmc xors.
+        var base: usize = spec.num_cols * spec.num_rows;
+        for (self.olmcs) |olmc| {
+            try fmap.set(base, olmc.active_high);
+            base += 1;
+        }
+        {
+            const data = &[_]bool{false} ** 64;
+            try fmap.setSlice(base, data);
+            base += data.len;
+        }
+        for (self.olmcs) |olmc| {
+            try fmap.set(base, olmc.comb);
+            base += 1;
+        }
+        if (self.pt) |ptd| {
+            try fmap.setSlice(base, ptd);
+            base += ptd.len;
+        } else {
+            // we don't support this case yet, 22v10
+            unreachable;
+        }
+
+        try fmap.set(base, self.syn);
+        base += 1;
+        try fmap.set(base, self.ac0);
+        base += 1;
     }
 };
+
+test "gal olmc comb" {
+    const alloc = testing.allocator;
+    const spec = &chipinfo.GAL16V8Spec;
+    var gal = try GAL.init(alloc, .gal16v8);
+    defer gal.deinit();
+    // create a random combinational term
+    const sop: *SopTerm = try gal.getSop(0, true);
+    try testing.expectEqual(sop, try gal.getSop(0, true));
+    try testing.expectEqual(7, sop.rows);
+    // we can't change the value of comb after we first call it
+    try testing.expectError(error.ArgumentError, gal.getSop(0, false));
+    // we should be able to make an oe term.
+    const oe: *SopTerm = try gal.getOETerm(0);
+    try testing.expectEqual(sop.cols, oe.cols);
+    var fusemap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
+    defer fusemap.deinit();
+    try gal.synthesize(&fusemap);
+}
+
+test "gal olmc registered" {
+    const alloc = testing.allocator;
+    const spec = &chipinfo.GAL16V8Spec;
+    var gal = try GAL.init(alloc, .gal16v8);
+    defer gal.deinit();
+    // create a random combinational term
+    const sop: *SopTerm = try gal.getSop(0, false);
+    try testing.expectEqual(sop, try gal.getSop(0, false));
+    try testing.expectEqual(8, sop.rows);
+    // we can't change the value of comb after we first call it
+    try testing.expectError(error.ArgumentError, gal.getSop(0, true));
+    // can't make an oe term, since registered uses the global oe pin
+    try testing.expectError(error.InvalidMode, gal.getOETerm(0));
+    var fusemap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
+    defer fusemap.deinit();
+    try gal.synthesize(&fusemap);
+}
+
+test "gal getSopPin" {
+    const alloc = testing.allocator;
+    // const spec = &chipinfo.GAL16V8Spec;
+    var gal = try GAL.init(alloc, .gal16v8);
+    defer gal.deinit();
+    const pin: chipinfo.Pin = @enumFromInt(13);
+    const sop: *SopTerm = try gal.getSopPin(pin, false);
+    _ = sop;
+    // should error for non-olmc pin
+    const input_pin: chipinfo.Pin = @enumFromInt(2);
+    try testing.expectError(error.InvalidPin, gal.getSopPin(input_pin, false));
+}

@@ -110,8 +110,6 @@ pub const FuseMap = struct {
 
     /// the actual fuses.
     fuses: []bool,
-    /// Cursor for chaining writes.
-    cursor: usize = 0,
 
     /// Initializes a new fuse map
     pub fn init(allocator: std.mem.Allocator, fuses: usize, pins: usize, default_state: bool) !FuseMap {
@@ -146,28 +144,13 @@ pub const FuseMap = struct {
     /// then you can use that plus the offset for that block to write the
     /// instance to the map.
     pub fn setSlice(self: *FuseMap, start: usize, data: []const bool) !void {
+        const end = start + data.len;
         // bounds check.
-        if (start + data.len > self.qf) {
+        if (end > self.qf) {
             return error.OutOfBounds;
         }
-        @memcpy(self.fuses[start..], data);
+        @memcpy(self.fuses[start..end], data);
     }
-
-    // pub fn setCursor(self: *FuseMap, pos: usize) void {
-    //     self.cursor = pos;
-    // }
-    // pub fn getCursor(self: *FuseMap) usize {
-    //     return self.cursor;
-    // }
-    // /// Writes a bit, advancing the cursor
-    // pub fn stream(self: *FuseMap, value: bool) !void {
-    //     try self.set(self.cursor, value);
-    //     self.cursor += 1;
-    // }
-    // pub fn streamSlice(self: *FuseMap, data: []const bool) !void {
-    //     try self.setSlice(self.cursor, data);
-    //     self.cursor += data.len;
-    // }
 
     /// Compute the checksum of the fuses.
     fn computeChecksum(self: *FuseMap) u16 {

@@ -14,38 +14,57 @@ pub const Order = enum { row, column };
 /// TODO: make bools more memory efficient.
 pub fn Array2D(comptime T: type) type {
     return struct {
+        const DataArray = std.ArrayListUnmanaged(T);
         const Self = @This();
+        allocator: Allocator,
         /// Underlying data representation
-        data: std.ArrayList(T),
+        data: DataArray,
         /// current number of rows.
         rows: usize = 0,
         /// current number of columns
         cols: usize = 0,
 
+        /// Create an empty, unsized matrix.
         pub fn init(allocator: Allocator) Self {
-            const data = std.ArrayList(T).init(allocator);
             return .{
-                .data = data,
+                .allocator = allocator,
+                .data = .empty,
             };
         }
+        /// Create an array that is already allocated for the correct size, but doesn't have
         pub fn initSize(allocator: Allocator, rows: usize, cols: usize) !Self {
             var self = init(allocator);
             try self.resize(rows, cols);
+            return self;
         }
 
         pub fn initFilled(allocator: Allocator, rows: usize, cols: usize, value: T) !Self {
             var self = try initSize(allocator, rows, cols);
             try self.fill(value);
+            return self;
+        }
+
+        /// Create a copy of this array using a new allocator.
+        pub fn clone(self: Self, allocator: Allocator) !Self {
+
+            // use the incoming allocator, since we want them to be able to manage it.
+            const items_copy = try self.data.clone(allocator);
+            return .{
+                .allocator = allocator,
+                .data = items_copy,
+                .rows = self.rows,
+                .cols = self.cols,
+            };
         }
 
         pub fn deinit(self: *Self) void {
-            self.data.deinit();
+            self.data.deinit(self.allocator);
         }
 
         pub fn resize(self: *Self, rows: usize, cols: usize) !void {
             self.rows = rows;
             self.cols = cols;
-            try self.data.resize(rows * cols);
+            try self.data.resize(self.allocator, rows * cols);
         }
 
         pub fn fill(self: *Self, value: T) void {

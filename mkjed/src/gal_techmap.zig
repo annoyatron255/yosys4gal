@@ -3,11 +3,13 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const testing = std.testing;
 
 const yosys = @import("./yosys_netlist.zig");
 const BiMap = @import("./bimap.zig").BiMap;
 const xv8 = @import("./gal_xV8.zig");
+const chip = @import("./chipinfo.zig");
 // Validation function that ensures that the netlist is using our techmap.
 /// One of the invariants we assume about the gal netlist is invalid.
 const ValidationError = error{
@@ -81,17 +83,19 @@ pub const CellsList = struct {
 /// Maps the nets to the pins.
 /// Optionally takes a PCF constraint file to bind module's ports to
 /// specific pins.
-pub fn PinAssignment(comptime T: type) type {
-    xv8.validatePinEnum(T);
-    return struct {
-        const Self = @This();
-        const PinType = T;
-        bimap: BiMap(yosys.Net, T),
+pub const PinAssignment = struct {
+    const Self = @This();
+    bimap: BiMap(yosys.Net, chip.Pin),
+    /// set of unassigned outputs.
+    output_set: DynamicBitSetUnmanaged(chip.Pin),
+    /// set of unassigned any-pin (input or output)
+    unused_set: DynamicBitSetUnmanaged(chip.Pin),
 
-        pub fn init(allocator: Allocator) Self {
-            return .{
-                .bimap = .init(allocator),
-            };
-        }
-    };
-}
+    pub fn init(allocator: Allocator, spec: chip.Spec) !Self {
+        return Self{
+            .bimap = .init(allocator),
+            .output_set = try spec.makeOlmcPinSet(allocator),
+            .unused_set = spec.makeValidPinSet(allocator),
+        };
+    }
+};
