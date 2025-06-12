@@ -2,20 +2,34 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 
+const flags = @import("./flags.zig");
+
+const CLIArgs = union(enum) {
+    build: struct {
+        type: []const u8,
+        mode: []const u8,
+        positional: struct {
+            file: []const u8,
+        },
+    },
+    format: struct {
+        verbose: bool = false,
+        positional: struct {
+            file: []const u8,
+        },
+    },
+
+    pub const help =
+        \\ mkjed build --type=<type> --mode=<mode> <file>
+        \\ mkjed format [--verbose] <file>
+        \\
+    ;
+};
+
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // Don't forget to flush!
+    var args = std.process.args();
+    const cli_args = flags.parse(&args, CLIArgs);
+    _ = cli_args;
 }
 
 test "simple test" {
