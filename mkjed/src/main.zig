@@ -4,15 +4,18 @@
 
 const flags = @import("./flags.zig");
 
+const yosys_netlist = lib.yosys_netlist;
+
 const CLIArgs = union(enum) {
     build: struct {
         type: []const u8,
         mode: []const u8,
         positional: struct {
-            file: []const u8,
+            netlist: []const u8,
+            constraints: ?[]const u8 = null,
         },
     },
-    format: struct {
+    validate: struct {
         verbose: bool = false,
         positional: struct {
             file: []const u8,
@@ -20,8 +23,8 @@ const CLIArgs = union(enum) {
     },
 
     pub const help =
-        \\ mkjed build --type=<type> --mode=<mode> <file>
-        \\ mkjed format [--verbose] <file>
+        \\ mkjed build --type=<type> --mode=<mode> <netlist> [constraints]
+        \\ mkjed validate [--verbose] <file>
         \\
     ;
 };
@@ -29,29 +32,26 @@ const CLIArgs = union(enum) {
 pub fn main() !void {
     var args = std.process.args();
     const cli_args = flags.parse(&args, CLIArgs);
-    _ = cli_args;
+    switch (cli_args) {
+        .validate => |v| {
+            try validateNetlist(v.verbose, v.positional.file);
+        },
+        .build => |b| {
+            _ = b;
+        },
+    }
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "use other module" {
-    try std.testing.expectEqual(@as(i32, 150), lib.add(100, 50));
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+pub fn validateNetlist(verbose: bool, path: []const u8) !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    _ = verbose;
+    const f = try std.fs.cwd().readFileAlloc(allocator, path, 8192 * 4096);
+    defer allocator.free(f);
+    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, allocator, f, .{
+        .ignore_unknown_fields = true,
+    });
+    defer netlist.deinit();
 }
 
 const std = @import("std");
