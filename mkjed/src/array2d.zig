@@ -40,7 +40,7 @@ pub fn Array2D(comptime T: type) type {
 
         pub fn initFilled(allocator: Allocator, rows: usize, cols: usize, value: T) !Self {
             var self = try initSize(allocator, rows, cols);
-            try self.fill(value);
+            self.fill(value);
             return self;
         }
 
@@ -99,14 +99,167 @@ test Array2D {
     const alloc = testing.allocator;
 
     const IntArray = Array2D(i32);
-    const BoolArray = Array2D(bool);
-
+    // init
     {
         var arr = IntArray.init(alloc);
         defer arr.deinit();
+
+        try testing.expect(arr.rows == 0);
+        try testing.expect(arr.cols == 0);
+        try testing.expect(arr.data.items.len == 0);
     }
+    // initsize
     {
-        var arr = BoolArray.init(alloc);
+        var arr = try IntArray.initSize(alloc, 3, 4);
         defer arr.deinit();
+
+        try testing.expect(arr.rows == 3);
+        try testing.expect(arr.cols == 4);
+        try testing.expect(arr.data.items.len == 12);
     }
+    // clone
+    {
+        var original = try IntArray.initFilled(alloc, 2, 2, 10);
+        defer original.deinit();
+
+        var cloned = try original.clone(alloc);
+        defer cloned.deinit();
+
+        try testing.expect(cloned.rows == original.rows);
+        try testing.expect(cloned.cols == original.cols);
+        try testing.expect(cloned.data.items.len == original.data.items.len);
+
+        // Verify data is copied
+        for (original.data.items, cloned.data.items) |orig, clone| {
+            try testing.expect(orig == clone);
+        }
+
+        // Verify they are independent (modify original, clone should be unchanged)
+        original.set(0, 0, 99);
+        try testing.expect(original.get(0, 0) == 99);
+        try testing.expect(cloned.get(0, 0) == 10);
+    }
+    // resize
+    {
+        var arr = IntArray.init(alloc);
+        defer arr.deinit();
+
+        // Initial resize
+        try arr.resize(2, 3);
+        try testing.expect(arr.rows == 2);
+        try testing.expect(arr.cols == 3);
+        try testing.expect(arr.data.items.len == 6);
+
+        // Resize to larger
+        try arr.resize(4, 5);
+        try testing.expect(arr.rows == 4);
+        try testing.expect(arr.cols == 5);
+        try testing.expect(arr.data.items.len == 20);
+
+        // Resize to smaller
+        try arr.resize(1, 2);
+        try testing.expect(arr.rows == 1);
+        try testing.expect(arr.cols == 2);
+        try testing.expect(arr.data.items.len == 2);
+    }
+    // fill
+    {
+        var arr = try IntArray.initSize(alloc, 3, 3);
+        defer arr.deinit();
+
+        arr.fill(7);
+
+        for (arr.data.items) |item| {
+            try testing.expect(item == 7);
+        }
+
+        // Fill with different value
+        arr.fill(-1);
+
+        for (arr.data.items) |item| {
+            try testing.expect(item == -1);
+        }
+    }
+    // get/set
+    {
+        var arr = try IntArray.initSize(alloc, 3, 4);
+        defer arr.deinit();
+
+        // Set values at different positions
+        arr.set(0, 0, 1);
+        arr.set(0, 3, 2);
+        arr.set(1, 1, 3);
+        arr.set(2, 3, 4);
+
+        // Get and verify values
+        try testing.expect(arr.get(0, 0) == 1);
+        try testing.expect(arr.get(0, 3) == 2);
+        try testing.expect(arr.get(1, 1) == 3);
+        try testing.expect(arr.get(2, 3) == 4);
+    }
+    // getptr
+    {
+        var arr = try IntArray.initFilled(alloc, 2, 2, 0);
+        defer arr.deinit();
+
+        // Modify through pointer
+        const ptr = arr.getPtr(1, 1);
+        ptr.* = 100;
+
+        try testing.expect(arr.get(1, 1) == 100);
+
+        // Verify other values unchanged
+        try testing.expect(arr.get(0, 0) == 0);
+        try testing.expect(arr.get(0, 1) == 0);
+        try testing.expect(arr.get(1, 0) == 0);
+    }
+    // Test with bool
+    {
+        const BoolArray = Array2D(bool);
+        var arr = try BoolArray.initFilled(alloc, 2, 2, true);
+        defer arr.deinit();
+
+        try testing.expect(arr.get(0, 0) == true);
+        arr.set(1, 1, false);
+        try testing.expect(arr.get(1, 1) == false);
+    }
+    // Test with f32
+    {
+        const FloatArray = Array2D(f32);
+        var arr = try FloatArray.initSize(alloc, 2, 2);
+        defer arr.deinit();
+
+        arr.set(0, 0, 3.14);
+        try testing.expect(arr.get(0, 0) == 3.14);
+    }
+}
+
+test "Array2D - getSlice" {
+    const alloc = testing.allocator;
+    const IntArray = Array2D(i32);
+
+    var arr = try IntArray.initSize(alloc, 3, 4);
+    defer arr.deinit();
+
+    // Fill with identifiable pattern
+    for (0..arr.rows) |row| {
+        for (0..arr.cols) |col| {
+            arr.set(row, col, @intCast(row * 10 + col));
+        }
+    }
+
+    // Test getting row slices (assuming row-major order)
+    const row0 = arr.getSlice(0);
+    try testing.expect(row0.len == 4);
+    try testing.expect(row0[0] == 0);
+    try testing.expect(row0[1] == 1);
+    try testing.expect(row0[2] == 2);
+    try testing.expect(row0[3] == 3);
+
+    const row1 = arr.getSlice(1);
+    try testing.expect(row1.len == 4);
+    try testing.expect(row1[0] == 10);
+    try testing.expect(row1[1] == 11);
+    try testing.expect(row1[2] == 12);
+    try testing.expect(row1[3] == 13);
 }
