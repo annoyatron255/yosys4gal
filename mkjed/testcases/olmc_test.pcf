@@ -1,0 +1,7 @@
+set_clk clk
+set_io A 3
+set_io B 4
+set_io AND 14
+set_io NAND 15
+set_io REG_AND 17
+set_io REG_NAND 16

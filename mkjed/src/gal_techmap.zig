@@ -1,5 +1,4 @@
 //! Describes various Yosys cells that form a Verilog to GAL
-//! mapping flow.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -12,6 +11,7 @@ const BiMap = @import("./bimap.zig").BiMap;
 const xv8 = @import("./gal_xV8.zig");
 const chip = @import("./chipinfo.zig");
 const pcf = @import("./pcf.zig");
+const PinMap = @import("./pin_mapping.zig").PinMap;
 // Validation function that ensures that the netlist is using our techmap.
 /// One of the invariants we assume about the gal netlist is invalid.
 const TechmapError = error{
@@ -97,6 +97,7 @@ pub const SopCell = struct {
     ref: *yosys.Cell,
 };
 
+/// GAL chip mapping state
 pub const TechMap = struct {
     const Self = @This();
     allocator: Allocator,
@@ -172,137 +173,88 @@ test TechMap {
 /// Maps the nets to the pins.
 /// Optionally takes a PCF constraint file to bind module's ports to
 /// specific pins.
-pub const PinAssignment = struct {
-    const Self = @This();
-    /// Used for storing deferred items.
-    const DeferredPort = struct {
-        net: yosys.Net,
-        dir: yosys.PortDirection,
-    };
-    allocator: Allocator,
-    spec: chip.ChipType,
-    bimap: BiMap(yosys.Net, chip.Pin),
-    /// set of unassigned outputs.
-    output_set: DynamicBitSetUnmanaged,
-    /// set of unassigned any-pin (input or output)
-    unused_set: DynamicBitSetUnmanaged,
-
-    pub fn init(allocator: Allocator, spec: chip.ChipType) !Self {
-        const info = spec.getSpec();
-        return Self{
-            .allocator = allocator,
-            .bimap = .init(allocator),
-            .spec = spec,
-            .output_set = try info.makeOlmcPinSet(allocator),
-            .unused_set = try info.makeValidPinSet(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.bimap.deinit();
-        self.output_set.deinit(self.allocator);
-        self.unused_set.deinit(self.allocator);
-    }
-
-    /// binds a net to a port. If the net is an output, it removes
-    /// it from the
-    fn bindPort(
-        self: *Self,
-        net: yosys.Net,
-        dir: yosys.PortDirection,
-        pin: u32,
-    ) !void {
-        assert(net == .N);
-        // get the actual pin enum from the u32.
-        const pin_enum = self.spec.getSpec().pinFromInt(pin) orelse return TechmapError.InvalidPin;
-        // check bitsets (assert - caller should have picked a valid one)
-        assert(self.unused_set.isSet(pin));
-        // non-inputs must be on the output set.
-        if (dir != .input) assert(self.output_set.isSet(pin));
-        // insert into mapping
-        assert(try self.bimap.insert(net, pin_enum));
-        // clear bitsets
-        self.unused_set.unset(pin);
-        self.output_set.unset(pin);
-    }
-
-    /// bind the constraints from the pcf file, and then bind the remaining ports.
-    fn bind(
-        self: *Self,
-        ports: std.json.ArrayHashMap(yosys.Port),
-        constraints: *const pcf.PinConstraints,
-    ) !void {
-        // ports that we need to assign later, after we're done with the PCF.
-        var deferred_nets = std.ArrayList(DeferredPort).init(self.allocator);
-        defer deferred_nets.deinit();
-        // first pass - bind PCF constrained pins.
-        var port_iter = ports.map.iterator();
-        while (port_iter.next()) |entry| {
-            const port_name = entry.key_ptr;
-            const port = entry.value_ptr;
-            if (constraints.clk_net) |clk_net| {
-                if (std.mem.eql(u8, clk_net, port_name.*)) {
-                    continue;
-                }
-            }
-            const dir = port.direction;
-            assert(port.bits.len > 0);
-            if (port.bits.len == 1) {
-                // check if we have a constraint
-                if (constraints.get(port_name.*)) |pin| {
-                    try self.bindPort(port.bits[0], dir, pin);
-                } else {
-                    try deferred_nets.append(.{ .dir = dir, .net = port.bits[0] });
-                }
-            } else {
-                for (port.bits, 0..) |net, idx| {
-                    // construct the port[index].
-                    var buf: [100]u8 = undefined;
-                    const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name, idx });
-                    if (constraints.get(fullname)) |pin| {
-                        try self.bindPort(net, dir, pin);
-                    } else {
-                        try deferred_nets.append(.{ .dir = dir, .net = net });
-                    }
-                }
-            }
-        }
-        // now clean up the deferred pins.
-        // compute non-output pins:
-        var input_pins_unused = try self.unused_set.clone(self.allocator);
-        defer input_pins_unused.deinit(self.allocator);
-        {
-            var out_iter = self.output_set.iterator(.{});
-            while (out_iter.next()) |op| {
-                input_pins_unused.unset(op);
-            }
-        }
-
-        // Iterate through the deferred ports. if it's an input,
-        // try to use the input pins first.
-        // if it's an output or inout, we must use the output sets.
-        for (deferred_nets.items) |dnet| {
-            if (dnet.dir == .input) {
-                // pick unassigned bit from input_pins_unused;
-                var candidate = input_pins_unused.findFirstSet();
-                if (candidate == null) {
-                    candidate = self.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
-                }
-                try self.bindPort(dnet.net, dnet.dir, @intCast(candidate.?));
-                input_pins_unused.unset(candidate.?);
-            } else {
-                // it's an output or inout, we can only use the output set.
-                const candidate = self.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
-                try self.bindPort(dnet.net, dnet.dir, @intCast(candidate));
-            }
-        }
-    }
+const DeferredPort = struct {
+    net: yosys.Net,
+    dir: yosys.PortDirection,
 };
-test PinAssignment {
+
+/// bind the constraints from the pcf file, and then bind the remaining ports.
+fn mapPins(
+    allocator: Allocator,
+    pinmap: *PinMap,
+    ports: std.json.ArrayHashMap(yosys.Port),
+    constraints: *const pcf.PinConstraints,
+) !void {
+    // ports that we need to assign later, after we're done with the PCF.
+    var deferred_nets = std.ArrayList(DeferredPort).init(allocator);
+    defer deferred_nets.deinit();
+    // first pass - bind PCF constrained pins.
+    var port_iter = ports.map.iterator();
+    while (port_iter.next()) |entry| {
+        const port_name = entry.key_ptr;
+        const port = entry.value_ptr;
+        if (constraints.clk_net) |clk_net| {
+            if (std.mem.eql(u8, clk_net, port_name.*)) {
+                continue;
+            }
+        }
+        const dir = port.direction;
+        assert(port.bits.len > 0);
+        if (port.bits.len == 1) {
+            // check if we have a constraint
+            if (constraints.get(port_name.*)) |pin| {
+                try pinmap.bindNet(port.bits[0], dir, pin);
+            } else {
+                try deferred_nets.append(.{ .dir = dir, .net = port.bits[0] });
+            }
+        } else {
+            for (port.bits, 0..) |net, idx| {
+                // construct the port[index].
+                var buf: [100]u8 = undefined;
+                const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name, idx });
+                if (constraints.get(fullname)) |pin| {
+                    try pinmap.bindNet(net, dir, pin);
+                } else {
+                    try deferred_nets.append(.{ .dir = dir, .net = net });
+                }
+            }
+        }
+    }
+    // now clean up the deferred pins.
+    // compute non-output pins:
+    var input_pins_unused = try pinmap.unused_set.clone(allocator);
+    defer input_pins_unused.deinit(allocator);
+    {
+        var out_iter = pinmap.output_set.iterator(.{});
+        while (out_iter.next()) |op| {
+            input_pins_unused.unset(op);
+        }
+    }
+
+    // Iterate through the deferred ports. if it's an input,
+    // try to use the input pins first.
+    // if it's an output or inout, we must use the output sets.
+    for (deferred_nets.items) |dnet| {
+        if (dnet.dir == .input) {
+            // pick unassigned bit from input_pins_unused;
+            var candidate = input_pins_unused.findFirstSet();
+            if (candidate == null) {
+                candidate = pinmap.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
+            }
+            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate.?));
+            input_pins_unused.unset(candidate.?);
+        } else {
+            // it's an output or inout, we can only use the output set.
+            const candidate = pinmap.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
+            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
+        }
+    }
+}
+test mapPins {
     const alloc = testing.allocator;
     // This is all netlist setup
     const example = "./testcases/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
+    const file = try std.fs.cwd().readFileAlloc(alloc, example, 20 * 8192);
     defer alloc.free(file);
     const netlist = try std.json.parseFromSlice(yosys.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
     defer netlist.deinit();
@@ -314,10 +266,10 @@ test PinAssignment {
     defer constraints.deinit();
     try constraints.parseSlice(pcf_file);
 
-    var pa = try PinAssignment.init(alloc, chip.ChipType.gal16v8);
+    var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
     defer pa.deinit();
     const top = netlist.value.findTopModule();
-    try pa.bind(top.ports, &constraints);
+    try mapPins(alloc, &pa, top.ports, &constraints);
     try pa.bimap.print();
 }
 
