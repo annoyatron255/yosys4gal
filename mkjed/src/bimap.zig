@@ -97,6 +97,16 @@ pub fn BiMap(comptime A: type, comptime B: type) type {
         pub fn containsB(self: Self, b: B) bool {
             return self.reverse.contains(b);
         }
+
+        pub fn print(self: Self) !void {
+            std.debug.print("{s} | {s}\n", .{ @typeName(A), @typeName(B) });
+            var iter = self.forward.iterator();
+            while (iter.next()) |entry| {
+                const a_val: A = entry.key_ptr.*;
+                const b_val: B = entry.value_ptr.*;
+                std.debug.print("{any} <=> {any}\n", .{ a_val, b_val });
+            }
+        }
     };
 }
 
