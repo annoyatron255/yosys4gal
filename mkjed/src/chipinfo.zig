@@ -107,6 +107,15 @@ pub const Spec = struct {
         }
         return null;
     }
+    /// Returns a pin, or null if the given integer was invalid.
+    pub fn pinFromInt(self: Self, val: usize) ?Pin {
+        for (self.valid_pins) |pin| {
+            if (val == @intFromEnum(pin)) {
+                return pin;
+            }
+        }
+        return null;
+    }
 };
 
 /// internal helper to ensure invariants
