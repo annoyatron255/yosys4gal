@@ -149,7 +149,7 @@ test readProperty {
 
 /// Net type. In Yosys, nets are either a numeric value, or one of xz01
 /// which means that the input is fixed to a global or don't care.
-const Net = union(enum) {
+pub const Net = union(enum) {
     /// "x" meaning we don't care about the value
     DontCare,
     /// "z" High-Z
@@ -340,6 +340,7 @@ test Port {
 
 /// Yosys Netlist Cell type.
 pub const Cell = struct {
+    const Self = @This();
     /// Cell type. Index into modules to find the root cell.
     type: []const u8,
     /// Parameters of this instance of the cell.
@@ -350,9 +351,27 @@ pub const Cell = struct {
     connections: json.ArrayHashMap(BitVector),
 
     port_directions: json.ArrayHashMap(PortDirection),
+
+    /// Returns a port/idx if a net is present on the cell, otherwise null.
+    pub fn hasNet(self: Self, net: Net) ?struct { port: []const u8, idx: usize } {
+        // search through the connections
+        assert(net == .N);
+        const n = net.N;
+        const conns = self.connections.map.iterator();
+        while (conns.next()) |c| {
+            const name = c.key_ptr;
+            const nets = c.value_ptr;
+            for (nets, 0..) |net_on_conn, idx| {
+                if (n == net_on_conn) {
+                    return .{ .port = name.*, .idx = idx };
+                }
+            }
+        }
+        return null;
+    }
 };
 
-/// Internal net naming system. typically you won't need to access this.
+/// Internal net naming system. Typically you won't need to access this.
 pub const NetDetails = struct {
     /// attributes include hdlname and src
     attributes: JsonStringMap,
@@ -403,7 +422,7 @@ pub fn NetMap(comptime T: type) type {
 pub fn NetMapMany(comptime T: type) type {
     return struct {
         const Self = @This();
-        const LookupTable = std.AutoArrayHashMap(u32, std.ArrayList(T));
+        const LookupTable = std.AutoArrayHashMapUnmanaged(u32, std.ArrayListUnmanaged(T));
 
         gpa: Allocator,
         lookup: LookupTable,
@@ -411,17 +430,17 @@ pub fn NetMapMany(comptime T: type) type {
         pub fn init(allocator: Allocator) !Self {
             return .{
                 .gpa = allocator,
-                .lookup = LookupTable.init(allocator),
+                .lookup = .empty,
             };
         }
         pub fn deinit(self: *Self) void {
             // cleanup the arraylists
             const vals = self.lookup.values();
-            for (vals) |val| {
-                val.deinit();
+            for (vals) |*val| {
+                val.deinit(self.gpa);
             }
             // cleanup the lookup
-            self.lookup.deinit();
+            self.lookup.deinit(self.gpa);
         }
 
         /// Add the value to the net, creating the arraylist if necessary.
@@ -429,13 +448,13 @@ pub fn NetMapMany(comptime T: type) type {
             if (key != .N) {
                 return error.InvalidNet;
             }
-            const gop = try self.lookup.getOrPut(key.N);
+            const gop = try self.lookup.getOrPut(self.gpa, key.N);
             // invariant: key is either null or non-empty arraylist.
             // it can never be an empty arraylist.
             if (!gop.found_existing) {
-                gop.value_ptr.* = try std.ArrayList(T).initCapacity(self.gpa, 8);
+                gop.value_ptr.* = try std.ArrayListUnmanaged(T).initCapacity(self.gpa, 8);
             }
-            try gop.value_ptr.append(value);
+            try gop.value_ptr.append(self.gpa, value);
         }
     };
 }
@@ -475,6 +494,8 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
             for (port_nets) |net| {
                 if (net == .N) {
                     try map.append(net, binding);
+                } else {
+                    // TODO: error?
                 }
             }
         }
@@ -516,7 +537,11 @@ test buildNetCellMap {
 /// Mapping of nets to ports. a net can belong to more than one port?
 pub const NetPortMap = NetMapMany(NetPortMember);
 
-pub const NetPortMember = struct { port: *Port, direction: PortDirection };
+pub const NetPortMember = struct {
+    port: *Port,
+    direction: PortDirection,
+    index: usize = 0,
+};
 
 pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap {
     var map = try NetPortMap.init(allocator);
@@ -525,11 +550,14 @@ pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap 
     while (ports.next()) |entry| {
         const port = entry.value_ptr;
 
-        const member: NetPortMember = .{ .direction = port.direction, .port = port };
-
-        for (port.bits) |net| {
+        for (port.bits, 0..) |net, idx| {
             // I don't see how a module could have a hard-coded net value as a port.
             assert(net == .N);
+            const member: NetPortMember = .{
+                .direction = port.direction,
+                .port = port,
+                .index = idx,
+            };
             try map.append(net, member);
         }
     }
