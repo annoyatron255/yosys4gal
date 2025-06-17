@@ -103,15 +103,21 @@ pub const TechMap = struct {
     allocator: Allocator,
     npm: yosys.NetPortMap,
     ncm: yosys.NetCellMap,
+    chip_type: chip.ChipType,
     olmcs: std.ArrayListUnmanaged(OlmcCell) = .empty,
     sops: std.ArrayListUnmanaged(SopCell) = .empty,
     inputs: std.ArrayListUnmanaged(InputCell) = .empty,
 
-    pub fn init(allocator: Allocator, netlist: *const yosys.Netlist) !Self {
+    pub fn init(
+        allocator: Allocator,
+        chip_type: chip.ChipType,
+        netlist: *const yosys.Netlist,
+    ) !Self {
         const top = netlist.findTopModule();
         const ncm = try yosys.buildNetCellMap(allocator, top);
         const npm = try yosys.buildNetPortMap(allocator, top);
         var self = Self{
+            .chip_type = chip_type,
             .npm = npm,
             .ncm = ncm,
             .allocator = allocator,
@@ -166,7 +172,7 @@ test TechMap {
     defer alloc.free(file);
     const netlist = try std.json.parseFromSlice(yosys.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
     defer netlist.deinit();
-    var tm = try TechMap.init(alloc, &netlist.value);
+    var tm = try TechMap.init(alloc, chip.ChipType.gal16v8, &netlist.value);
     defer tm.deinit();
 }
 
