@@ -10,8 +10,8 @@ if { $argc != 1 && $argc != 2 } {
 set fbasename [file rootname [file tail [lindex $argv 0]]]
 puts $fbasename
 
-exec rm -rf output
-exec mkdir output
+# exec rm -rf output
+exec mkdir -p output
 
 ## Set target chip (default to GAL16V8)
 set target [expr {$argc == 2 ? [lindex $argv 1] : "GAL16V8"}]
@@ -131,7 +131,7 @@ ltp -noff
 design -load postop
 
 ## Print final stats and show graph
-show -width -signed
+# show -width -signed
 stat
 
-shell
+# shell
