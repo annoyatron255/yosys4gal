@@ -8,9 +8,9 @@ pub const yosys_netlist = @import("./yosys_netlist.zig");
 pub const pcf = @import("./pcf.zig");
 pub const jed = @import("./jed.zig");
 pub const xv8 = @import("./gal_xV8.zig");
-pub const bimap = @import("./bimap.zig");
+pub const bimap = @import("./util/bimap.zig");
 pub const techmap = @import("./gal_techmap.zig");
-pub const array2d = @import("./array2d.zig");
+pub const array2d = @import("./util/array2d.zig");
 pub const info = @import("./chipinfo.zig");
 
 test "main" {

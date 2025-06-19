@@ -9,7 +9,7 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const assert = std.debug.assert;
 
 const yosys_netlist = @import("./yosys_netlist.zig");
-const BiMap = @import("./bimap.zig").BiMap;
+const BiMap = @import("./util/bimap.zig").BiMap;
 const chip = @import("./chipinfo.zig");
 
 /// Maps design nets to chip pins.
