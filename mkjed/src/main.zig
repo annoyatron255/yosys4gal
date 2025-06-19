@@ -2,7 +2,7 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 
-const flags = @import("./flags.zig");
+const flags = @import("./util/flags.zig");
 
 const yosys_netlist = lib.yosys_netlist;
 

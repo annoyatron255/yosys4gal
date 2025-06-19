@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const assert = std.debug.assert;
 
-const yosys = @import("./yosys_netlist.zig");
+const yosys_netlist = @import("./yosys_netlist.zig");
 const BiMap = @import("./bimap.zig").BiMap;
 const chip = @import("./chipinfo.zig");
 
@@ -32,7 +32,7 @@ pub const PinMap = struct {
     /// underlying chip type.
     spec: chip.ChipType,
     /// The existing bindings.
-    bimap: BiMap(yosys.Net, chip.Pin),
+    bimap: BiMap(yosys_netlist.Net, chip.Pin),
     /// set of unassigned outputs.
     output_set: DynamicBitSetUnmanaged,
     /// set of unassigned inputs
@@ -80,8 +80,8 @@ pub const PinMap = struct {
     /// output-capable pin.
     pub fn bindNet(
         self: *Self,
-        net: yosys.Net,
-        dir: yosys.PortDirection,
+        net: yosys_netlist.Net,
+        dir: yosys_netlist.PortDirection,
         pin: u32,
     ) Error!void {
         if (net != .N) {
@@ -113,7 +113,7 @@ pub const PinMap = struct {
     /// Attempts to find a valid pin that can be used for mapping.
     /// Based on the direction, it will either pull from the output_set only
     /// or from the inputs first before trying the outputs.
-    pub fn candidate(self: Self, dir: yosys.PortDirection) ?u32 {
+    pub fn candidate(self: Self, dir: yosys_netlist.PortDirection) ?u32 {
         switch (dir) {
             .input => {
                 // try to find an input pin, or fall back to the unused set.

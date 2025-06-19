@@ -12,7 +12,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
-const Array2D = @import("array2d.zig").Array2D;
+const Array2D = @import("util/array2d.zig").Array2D;
 const jed = @import("jed.zig");
 const FuseMap = jed.FuseMap;
 const chipinfo = @import("./chipinfo.zig");

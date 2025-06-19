@@ -6,8 +6,8 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-const yosys = @import("./yosys_netlist.zig");
-const BiMap = @import("./bimap.zig").BiMap;
+const yosys_netlist = @import("./yosys_netlist.zig");
+const BiMap = @import("./util/bimap.zig").BiMap;
 const xv8 = @import("./gal_xV8.zig");
 const chip = @import("./chipinfo.zig");
 const pcf = @import("./pcf.zig");
@@ -54,7 +54,7 @@ const CellType = enum {
     }
 };
 
-fn validate(netlist: *const yosys.Netlist) TechmapError!void {
+fn validate(netlist: *const yosys_netlist.Netlist) TechmapError!void {
     const top = netlist.findTopModule();
 
     // iterate through the cells, ensuring that each one is one of validCellTypes.
@@ -73,7 +73,7 @@ test validate {
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
     defer alloc.free(file);
 
-    const netlist = try std.json.parseFromSlice(yosys.Netlist, alloc, file, .{
+    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{
         .ignore_unknown_fields = true,
     });
     defer netlist.deinit();
@@ -84,25 +84,30 @@ test validate {
 // methods reach into the cell to extract information
 
 pub const OlmcCell = struct {
-    ref: *yosys.Cell,
+    ref: *yosys_netlist.Cell,
     src: ?*SopCell = null,
     oe_src: ?*SopCell = null,
 };
 
 pub const InputCell = struct {
-    ref: *yosys.Cell,
+    ref: *yosys_netlist.Cell,
 };
 
 pub const SopCell = struct {
-    ref: *yosys.Cell,
+    ref: *yosys_netlist.Cell,
+    /// Create an Array2D for this SOP.
+    pub fn toArray(self: SopCell) void {
+        // TODO
+        _ = self;
+    }
 };
 
 /// GAL chip mapping state
 pub const TechMap = struct {
     const Self = @This();
     allocator: Allocator,
-    npm: yosys.NetPortMap,
-    ncm: yosys.NetCellMap,
+    npm: yosys_netlist.NetPortMap,
+    ncm: yosys_netlist.NetCellMap,
     chip_type: chip.ChipType,
     olmcs: std.ArrayListUnmanaged(OlmcCell) = .empty,
     sops: std.ArrayListUnmanaged(SopCell) = .empty,
@@ -111,11 +116,11 @@ pub const TechMap = struct {
     pub fn init(
         allocator: Allocator,
         chip_type: chip.ChipType,
-        netlist: *const yosys.Netlist,
+        netlist: *const yosys_netlist.Netlist,
     ) !Self {
         const top = netlist.findTopModule();
-        const ncm = try yosys.buildNetCellMap(allocator, top);
-        const npm = try yosys.buildNetPortMap(allocator, top);
+        const ncm = try yosys_netlist.buildNetCellMap(allocator, top);
+        const npm = try yosys_netlist.buildNetPortMap(allocator, top);
         var self = Self{
             .chip_type = chip_type,
             .npm = npm,
@@ -170,7 +175,7 @@ test TechMap {
     const example = "./testcases/synth_olmc_test.json";
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
     defer alloc.free(file);
-    const netlist = try std.json.parseFromSlice(yosys.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
     defer netlist.deinit();
     var tm = try TechMap.init(alloc, chip.ChipType.gal16v8, &netlist.value);
     defer tm.deinit();
@@ -180,15 +185,15 @@ test TechMap {
 /// Optionally takes a PCF constraint file to bind module's ports to
 /// specific pins.
 const DeferredPort = struct {
-    net: yosys.Net,
-    dir: yosys.PortDirection,
+    net: yosys_netlist.Net,
+    dir: yosys_netlist.PortDirection,
 };
 
 /// bind the constraints from the pcf file, and then bind the remaining ports.
 fn mapPins(
     allocator: Allocator,
     pinmap: *PinMap,
-    ports: std.json.ArrayHashMap(yosys.Port),
+    ports: std.json.ArrayHashMap(yosys_netlist.Port),
     constraints: *const pcf.PinConstraints,
 ) !void {
     // ports that we need to assign later, after we're done with the PCF.
@@ -245,6 +250,7 @@ fn mapPins(
             // pick unassigned bit from input_pins_unused;
             var candidate = input_pins_unused.findFirstSet();
             if (candidate == null) {
+                // we couldn't find an input pin, so let's reach for an output pin to sacrifice.
                 candidate = pinmap.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
             }
             try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate.?));
@@ -262,7 +268,7 @@ test mapPins {
     const example = "./testcases/synth_olmc_test.json";
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 20 * 8192);
     defer alloc.free(file);
-    const netlist = try std.json.parseFromSlice(yosys.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
     defer netlist.deinit();
 
     const pcf_path = "./testcases/olmc_test.pcf";
