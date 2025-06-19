@@ -341,6 +341,10 @@ test Port {
 /// Yosys Netlist Cell type.
 pub const Cell = struct {
     const Self = @This();
+    const PropType = enum {
+        attr,
+        param,
+    };
     /// Cell type. Index into modules to find the root cell.
     type: []const u8,
     /// Parameters of this instance of the cell.
@@ -368,6 +372,14 @@ pub const Cell = struct {
             }
         }
         return null;
+    }
+
+    /// Attempt to read a value from the properties of the cell.
+    pub fn getProp(self: Self, comptime T: type, prop: PropType, name: []const u8) ?T {
+        return switch (prop) {
+            .attr => readProperty(T, self.attributes, name),
+            .param => readProperty(T, self.parameters, name),
+        };
     }
 };
 
