@@ -1,4 +1,4 @@
-set_io clk 1
+set_clk clk
 set_io A 3
 set_io B 4
 set_io AND 14

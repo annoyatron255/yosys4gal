@@ -261,7 +261,7 @@ pub const Netlist = struct {
 test Netlist {
     // try loading a file from testcase.
     const alloc = testing.allocator;
-    const example = "./testcases/synth_olmc_test.json";
+    const example = "./output/synth_olmc_test.json";
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
     defer alloc.free(file);
 
@@ -518,7 +518,7 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
 test buildNetCellMap {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./testcases/synth_olmc_test.json";
+    const example = "./output/synth_olmc_test.json";
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
     defer alloc.free(file);
     const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
@@ -579,7 +579,7 @@ pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap 
 test buildNetPortMap {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./testcases/synth_olmc_test.json";
+    const example = "./output/synth_olmc_test.json";
     const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
     defer alloc.free(file);
     const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
