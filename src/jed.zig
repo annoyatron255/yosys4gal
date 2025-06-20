@@ -12,7 +12,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 const builtin = @import("builtin");
-const meta = @import("meta.zig");
+const meta = @import("meta");
 
 fn bool2char(val: bool) u8 {
     return if (val) '1' else '0';
