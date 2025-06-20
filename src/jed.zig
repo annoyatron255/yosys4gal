@@ -281,3 +281,41 @@ test "writeJed" {
     // use slices, since we have the 0x02 and 0x03.
     try std.testing.expectEqualSlices(u8, expected_file, output.items[0 .. output.items.len - 4]);
 }
+
+// test to see if the jed is valid. using jedutil.
+
+test "jedutil valid jed" {
+    const alloc = testing.allocator;
+    var fmap = try FuseMap.init(alloc, 2194, 20, false);
+    defer fmap.deinit();
+
+    try fmap.set(768, true);
+    // write to temp file...
+    // make sure we delete this even if the test fails.
+    // oh, testing.TmpDir exists
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    {
+        var out = try tmp.dir.createFile("output.jed", .{});
+        defer out.close();
+
+        try fmap.writeJed(out.writer(), .{});
+    }
+
+    // invoke jedutil -view output.jed gal16v8
+    const args = [_][]const u8{ "jedutil", "-view", "output.jed", "gal16v8" };
+    var proc = std.process.Child.init(&args, alloc);
+    // run it inside the tmp dir
+    // TODO: doesn't work on windows.
+    proc.cwd_dir = tmp.dir;
+    proc.stdout_behavior = .Ignore;
+    proc.stderr_behavior = .Pipe;
+    try proc.spawn();
+    // assert that the stderr is empty
+    const output = try proc.stderr.?.readToEndAlloc(alloc, 1024);
+    defer alloc.free(output);
+    try testing.expectEqual(0, output.len);
+
+    const res = try proc.wait();
+    try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
+}
