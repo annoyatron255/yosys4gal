@@ -32,6 +32,7 @@ fn synth(
     const writer = log_file.writer();
     const output = try proc.stdout.?.readToEndAlloc(alloc, 1024 * 1024);
     defer alloc.free(output);
+    _ = try proc.wait();
     try writer.writeAll(output);
 }
 
