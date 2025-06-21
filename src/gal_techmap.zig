@@ -282,7 +282,6 @@ test mapPins {
     defer pa.deinit();
     const top = netlist.value.findTopModule();
     try mapPins(alloc, &pa, top.ports, &constraints);
-    try pa.bimap.print();
 }
 
 // pcf constrained outputs
