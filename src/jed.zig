@@ -230,13 +230,13 @@ pub const FuseMap = struct {
     /// bit-packed fuse bits. This is largely untested.
     pub fn writeBin(self: *FuseMap, output: anytype) !void {
         // first, write the length as a 4-byte value.
-        try output.writeInt(u32, self.fuses.len, .big);
+        try output.writeInt(u32, @intCast(self.fuses.len), .big);
 
         var bits = std.io.bitWriter(.big, output);
         for (self.fuses) |fuse| {
-            bits.writeBits(fuse, 1);
+            try bits.writeBits(fuse, 1);
         }
-        bits.flushBits();
+        try bits.flushBits();
     }
 };
 
@@ -301,16 +301,40 @@ test "jedutil valid jed" {
 
         try fmap.writeJed(out.writer(), .{});
     }
+    try testJedutil(alloc, tmp, "output.jed");
+}
+test "jedutil valid bin" {
+    const alloc = testing.allocator;
+    var fmap = try FuseMap.init(alloc, 2194, 20, false);
+    defer fmap.deinit();
+
+    try fmap.set(768, true);
+    // write to temp file...
+    // make sure we delete this even if the test fails.
+    // oh, testing.TmpDir exists
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    {
+        var out = try tmp.dir.createFile("output.bin", .{});
+        defer out.close();
+
+        try fmap.writeBin(out.writer());
+    }
+    try testJedutil(alloc, tmp, "output.bin");
+}
+
+fn testJedutil(alloc: std.mem.Allocator, tmp: testing.TmpDir, file: []const u8) !void {
 
     // invoke jedutil -view output.jed gal16v8
-    const args = [_][]const u8{ "jedutil", "-view", "output.jed", "gal16v8" };
+    const args = [_][]const u8{ "jedutil", "-view", file, "gal16v8" };
     var proc = std.process.Child.init(&args, alloc);
-    // run it inside the tmp dir
-    // TODO: doesn't work on windows.
     proc.cwd_dir = tmp.dir;
     proc.stdout_behavior = .Ignore;
     proc.stderr_behavior = .Pipe;
-    try proc.spawn();
+    proc.spawn() catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => |other| return other,
+    };
     // assert that the stderr is empty
     const output = try proc.stderr.?.readToEndAlloc(alloc, 1024);
     defer alloc.free(output);
