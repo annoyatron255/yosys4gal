@@ -4,6 +4,9 @@
 
 const flags = @import("./util/flags.zig");
 
+test {
+    _ = flags;
+}
 const yosys_netlist = lib.yosys_netlist;
 
 const CLIArgs = union(enum) {

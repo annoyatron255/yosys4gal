@@ -554,7 +554,7 @@ pub fn flag_name(comptime field: std.builtin.Type.StructField) []const u8 {
 }
 
 test flag_name {
-    const field = @typeInfo(struct { statsd: bool }).Struct.fields[0];
+    const field = @typeInfo(struct { statsd: bool }).@"struct".fields[0];
     try std.testing.expectEqualStrings(flag_name(field), "--statsd");
 }
 
