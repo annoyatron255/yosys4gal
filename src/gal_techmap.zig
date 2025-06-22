@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 
 const yosys_netlist = @import("./yosys_netlist.zig");
 const BiMap = @import("./util/bimap.zig").BiMap;
+const Array2D = @import("./util/array2d.zig").Array2D;
 const xv8 = @import("./gal_xV8.zig");
 const chip = @import("./chipinfo.zig");
 const pcf = @import("./pcf.zig");
@@ -86,13 +87,45 @@ pub const OlmcCell = struct {
 pub const InputCell = struct {
     ref: *yosys_netlist.Cell,
 };
-
+fn ctobool(char: u8) bool {
+    return switch (char) {
+        '0' => false,
+        '1' => true,
+        _ => unreachable,
+    };
+}
 pub const SopCell = struct {
     ref: *yosys_netlist.Cell,
-    /// Create an Array2D for this SOP.
-    pub fn toArray(self: SopCell) void {
-        // TODO
-        _ = self;
+    /// Convert this SOP and place it on the given array2d.
+    pub fn toArray(self: SopCell, tm: *TechMap, pm: PinMap, out: *Array2D(bool)) !void {
+        // extract the params.
+        // depth aka number of products
+        const depth = self.ref.getProp(u32, .param, "DEPTH");
+        // width
+        const width = self.ref.getProp(u32, .param, "WIDTH");
+        // table is []const u8 still - could be huge.
+        const table = self.ref.getProp([]const u8, .param, "TABLE");
+        const inputs = self.ref.connections.map.get("A").?;
+        assert(width == inputs.len);
+        assert(table.len == width * depth * 2);
+
+        // look at each input, map to net, then pin.
+        // based on the pin compute the column we need to edit.
+        // then go through each product term with that input,
+        // and set the rows based on table
+        for (inputs, 0..) |input, idx| {
+            // do we always have this?
+            const pin = pm.bimap.getA(input).?;
+            const col = tm.chip_type.getSpec().getPinCol(pin);
+            // compute the table.
+            for (0..depth) |row| {
+                // width * row -> put us in the correct product
+                // idx * 2 - select inside the product
+                const pos = width * row + idx * 2;
+                out.set(row, col, ctobool(table[pos]));
+                out.set(row, col + 1, ctobool(table[pos + 1]));
+            }
+        }
     }
 };
 
@@ -106,6 +139,7 @@ pub const TechMap = struct {
     olmcs: std.ArrayListUnmanaged(OlmcCell) = .empty,
     sops: std.ArrayListUnmanaged(SopCell) = .empty,
     inputs: std.ArrayListUnmanaged(InputCell) = .empty,
+    netlist: *const yosys_netlist.Netlist,
 
     pub fn init(
         allocator: Allocator,
@@ -117,6 +151,7 @@ pub const TechMap = struct {
         const npm = try yosys_netlist.buildNetPortMap(allocator, top);
         var self = Self{
             .chip_type = chip_type,
+            .netlist = netlist,
             .npm = npm,
             .ncm = ncm,
             .allocator = allocator,
@@ -166,10 +201,7 @@ pub const TechMap = struct {
 test TechMap {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
-    defer alloc.free(file);
-    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try yosys_netlist.getExampleNetlist(alloc);
     defer netlist.deinit();
     var tm = try TechMap.init(alloc, chip.ChipType.gal16v8, &netlist.value);
     defer tm.deinit();
@@ -182,6 +214,7 @@ const DeferredPort = struct {
     net: yosys_netlist.Net,
     dir: yosys_netlist.PortDirection,
 };
+
 
 /// bind the constraints from the pcf file, and then bind the remaining ports.
 fn mapPins(
@@ -263,7 +296,7 @@ test mapPins {
     defer netlist.deinit();
 
     const pcf_path = "./testcases/olmc_test.pcf";
-    const pcf_file = try std.fs.cwd().readFileAlloc(alloc, pcf_path, 8192 * 20);
+    const pcf_file = try std.fs.cwd().readFileAlloc(alloc, pcf_path, 8192);
     defer alloc.free(pcf_file);
     var constraints = pcf.PinConstraints.init(alloc);
     defer constraints.deinit();
