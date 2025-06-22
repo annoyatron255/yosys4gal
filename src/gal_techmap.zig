@@ -69,13 +69,7 @@ fn validate(netlist: *const yosys_netlist.Netlist) TechmapError!void {
 test validate {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
-    defer alloc.free(file);
-
-    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{
-        .ignore_unknown_fields = true,
-    });
+    const netlist = try yosys_netlist.getExampleNetlist(alloc);
     defer netlist.deinit();
     try validate(&netlist.value);
 }
@@ -265,10 +259,7 @@ fn mapPins(
 test mapPins {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 20 * 8192);
-    defer alloc.free(file);
-    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try yosys_netlist.getExampleNetlist(alloc);
     defer netlist.deinit();
 
     const pcf_path = "./testcases/olmc_test.pcf";

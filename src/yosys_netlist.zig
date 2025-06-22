@@ -259,13 +259,8 @@ pub const Netlist = struct {
 };
 
 test Netlist {
-    // try loading a file from testcase.
     const alloc = testing.allocator;
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
-    defer alloc.free(file);
-
-    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try getExampleNetlist(alloc);
     defer netlist.deinit();
     {
         const top_ptr = netlist.value.modules.map.getPtr("olmc_test");
@@ -518,10 +513,7 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
 test buildNetCellMap {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
-    defer alloc.free(file);
-    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try getExampleNetlist(alloc);
     defer netlist.deinit();
 
     const top = netlist.value.findTopModule();
@@ -576,13 +568,21 @@ pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap 
     return map;
 }
 
+/// Testing function to get the example netlist.
+pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
+    const example = "./output/synth_olmc_test.json";
+    const file = try std.fs.cwd().openFile(example, .{});
+    defer file.close();
+    var reader = json.reader(alloc, file.reader());
+    defer reader.deinit();
+    const netlist = try json.parseFromTokenSource(Netlist, alloc, &reader, .{ .ignore_unknown_fields = true });
+
+    return netlist;
+}
+
 test buildNetPortMap {
     const alloc = testing.allocator;
-    // This is all netlist setup
-    const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().readFileAlloc(alloc, example, 1024 * 8192);
-    defer alloc.free(file);
-    const netlist = try json.parseFromSlice(Netlist, alloc, file, .{ .ignore_unknown_fields = true });
+    const netlist = try getExampleNetlist(alloc);
     defer netlist.deinit();
 
     const top = netlist.value.findTopModule();
