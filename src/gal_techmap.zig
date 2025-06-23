@@ -6,13 +6,17 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-const yosys_netlist = @import("./yosys_netlist.zig");
-const BiMap = @import("./util/bimap.zig").BiMap;
-const Array2D = @import("./util/array2d.zig").Array2D;
-const xv8 = @import("./gal_xV8.zig");
 const chip = @import("./chipinfo.zig");
+const xv8 = @import("./gal_xV8.zig");
 const pcf = @import("./pcf.zig");
+const yosys_netlist = @import("./yosys_netlist.zig");
+
+const Net = yosys_netlist.Net;
+const Netlist = yosys_netlist.Netlist;
 const PinMap = @import("./pin_mapping.zig").PinMap;
+const Array2D = @import("./util/array2d.zig").Array2D;
+const BiMap = @import("./util/bimap.zig").BiMap;
+
 // Validation function that ensures that the netlist is using our techmap.
 /// One of the invariants we assume about the gal netlist is invalid.
 const TechmapError = error{
@@ -24,7 +28,7 @@ const TechmapError = error{
     PinNotFound,
 };
 
-const CellType = enum {
+const GALCell = enum {
     const Self = @This();
     Olmc,
     Sop,
@@ -55,14 +59,14 @@ const CellType = enum {
     }
 };
 
-fn validate(netlist: *const yosys_netlist.Netlist) TechmapError!void {
+fn validate(netlist: *const Netlist) TechmapError!void {
     const top = netlist.findTopModule();
 
     // iterate through the cells, ensuring that each one is one of validCellTypes.
 
     const cells = top.cells.map.values();
     for (cells) |cell| {
-        if (CellType.fromString(cell.type) == null)
+        if (GALCell.fromString(cell.type) == null)
             return TechmapError.UnknownCellType;
     }
 }
@@ -79,13 +83,46 @@ test validate {
 // methods reach into the cell to extract information
 
 pub const OlmcCell = struct {
+    // FIXME: use this.
+    const Port = enum { A, E, Y };
     ref: *yosys_netlist.Cell,
-    src: ?*SopCell = null,
-    oe_src: ?*SopCell = null,
+
+    /// Returns the sop cell on the port, which is one of A or E
+    pub fn getSop(self: OlmcCell, comptime port: []const u8, tm: *TechMap) ?SopCell {
+        comptime {
+            if (!std.mem.eql(u8, port, "A") and !std.mem.eql(u8, port, "E")) {
+                @compileError("Unsupported getSop Port: " ++ port);
+            }
+        }
+        var input: Net = undefined;
+        {
+            const inputs = self.ref.connections.map.get(port).?;
+            assert(inputs.len == 1);
+            input = inputs[0];
+        }
+        // search through the ncm to find the driver net. assert that it's a valid SOP.
+        const cells_on_net = tm.ncm.lookup.get(input.N).?.items;
+
+        for (cells_on_net) |cell| {
+            if (cell.direction == .output) {
+                assert(std.mem.eql(u8, cell.port, "Y"));
+                // found one - assert that it's a sop.
+                return SopCell.init(cell.cell);
+            }
+        }
+        return null;
+    }
+
+    /// Returns the output pin for this olmc by using the pin map
+    pub fn getOutputPin(self: OlmcCell, tm: *TechMap) chip.Pin {
+        // get the output net
+        const output_net = self.ref.connections.map.get("Y").?[0];
+        return tm.pinmap.bimap.getA(output_net).?;
+    }
 };
 
 pub const InputCell = struct {
-    ref: *yosys_netlist.Cell,
+    ref: *const yosys_netlist.Cell,
 };
 fn ctobool(char: u8) bool {
     return switch (char) {
@@ -95,14 +132,14 @@ fn ctobool(char: u8) bool {
     };
 }
 pub const SopCell = struct {
-    ref: *yosys_netlist.Cell,
+    ref: *const yosys_netlist.Cell,
     /// Convert this SOP and place it on the given array2d.
-    pub fn toArray(self: SopCell, tm: *TechMap, pm: PinMap, out: *Array2D(bool)) !void {
+    pub fn toArray(self: SopCell, tm: *TechMap, pm: PinMap, out: *xv8.SopTerm) !void {
         // extract the params.
         // depth aka number of products
-        const depth = self.ref.getProp(u32, .param, "DEPTH");
+        const depth = self.ref.getProp(u32, .param, "DEPTH").?;
         // width
-        const width = self.ref.getProp(u32, .param, "WIDTH");
+        const width = self.ref.getProp(u32, .param, "WIDTH").?;
         // table is []const u8 still - could be huge.
         const table = self.ref.getProp([]const u8, .param, "TABLE");
         const inputs = self.ref.connections.map.get("A").?;
@@ -127,6 +164,25 @@ pub const SopCell = struct {
             }
         }
     }
+    /// Create a SopCell from a given Cell. When in ReleaseSafe or Debug,
+    /// will perform validation of the cell.
+    pub fn init(cell: *const yosys_netlist.Cell) SopCell {
+        const depth = cell.getProp(u32, .param, "DEPTH");
+        const width = cell.getProp(u32, .param, "WIDTH");
+        const table = cell.getProp([]const u8, .param, "TABLE");
+        const inputs = cell.connections.map.get("A");
+        // FIXME: replace with errors
+        assert(depth != null);
+        assert(width != null);
+        assert(table != null);
+        assert(inputs != null);
+        assert(width.? == inputs.?.len);
+        assert(table.?.len == width.? * depth.? * 2);
+        const output = cell.connections.map.get("Y");
+        assert(output != null);
+        assert(output.?.len == 1);
+        return SopCell{ .ref = cell };
+    }
 };
 
 /// GAL chip mapping state
@@ -139,12 +195,13 @@ pub const TechMap = struct {
     olmcs: std.ArrayListUnmanaged(OlmcCell) = .empty,
     sops: std.ArrayListUnmanaged(SopCell) = .empty,
     inputs: std.ArrayListUnmanaged(InputCell) = .empty,
-    netlist: *const yosys_netlist.Netlist,
+    netlist: *const Netlist,
+    pinmap: PinMap,
 
     pub fn init(
         allocator: Allocator,
         chip_type: chip.ChipType,
-        netlist: *const yosys_netlist.Netlist,
+        netlist: *const Netlist,
     ) !Self {
         const top = netlist.findTopModule();
         const ncm = try yosys_netlist.buildNetCellMap(allocator, top);
@@ -155,8 +212,16 @@ pub const TechMap = struct {
             .npm = npm,
             .ncm = ncm,
             .allocator = allocator,
+            .pinmap = PinMap.init(Allocator, chip_type),
         };
         // iterate through the cells. for each cell, determine the type.
+        // now loop through OLMCs and find their parent if it exists.
+        try self.populateArrays();
+
+        return self;
+    }
+    fn populateArrays(self: *Self) !void {
+        const top = self.netlist.findTopModule();
         var cells = top.cells.map.iterator();
 
         var sop_count: usize = 0;
@@ -167,7 +232,7 @@ pub const TechMap = struct {
 
             std.log.debug("processing cell {s}", .{cell_name});
 
-            const ctype = CellType.fromString(cell.type) orelse return TechmapError.UnknownCellType;
+            const ctype = GALCell.fromString(cell.type) orelse return TechmapError.UnknownCellType;
 
             switch (ctype) {
                 .Input => {
@@ -187,8 +252,14 @@ pub const TechMap = struct {
                 },
             }
         }
-        return self;
     }
+
+    /// make the constraints work...
+    pub fn applyConstraints(self: *Self, constraints: pcf.PinConstraints) !void {
+        const top = self.netlist.findTopModule();
+        try mapPins(self.allocator, self.cinmap, top.ports, constraints);
+    }
+
     pub fn deinit(self: *Self) void {
         self.npm.deinit();
         self.ncm.deinit();
@@ -207,14 +278,17 @@ test TechMap {
     defer tm.deinit();
 }
 
+fn findDriver(v: yosys_netlist.NetCellMember) bool {
+    return std.mem.eql(u8, v.port, "Y");
+}
+
 /// Maps the nets to the pins.
 /// Optionally takes a PCF constraint file to bind module's ports to
 /// specific pins.
 const DeferredPort = struct {
-    net: yosys_netlist.Net,
+    net: Net,
     dir: yosys_netlist.PortDirection,
 };
-
 
 /// bind the constraints from the pcf file, and then bind the remaining ports.
 fn mapPins(

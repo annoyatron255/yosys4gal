@@ -463,6 +463,17 @@ pub fn NetMapMany(comptime T: type) type {
             }
             try gop.value_ptr.append(self.gpa, value);
         }
+        /// Searches a key array for a function matching the predicate.
+        pub fn getFiltered(self: Self, key: Net, search: fn (v: T) bool) ?T {
+            if (self.lookup.get(key)) |list| {
+                for (list.items) |entry| {
+                    if (search(entry)) {
+                        return entry;
+                    }
+                }
+            }
+            return null;
+        }
     };
 }
 
@@ -568,6 +579,17 @@ pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap 
     return map;
 }
 
+test buildNetPortMap {
+    const alloc = testing.allocator;
+    const netlist = try getExampleNetlist(alloc);
+    defer netlist.deinit();
+
+    const top = netlist.value.findTopModule();
+
+    var map = try buildNetPortMap(alloc, top);
+    defer map.deinit();
+}
+
 /// Testing function to get the example netlist.
 pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
     const example = "./output/synth_olmc_test.json";
@@ -578,15 +600,4 @@ pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
     const netlist = try json.parseFromTokenSource(Netlist, alloc, &reader, .{ .ignore_unknown_fields = true });
 
     return netlist;
-}
-
-test buildNetPortMap {
-    const alloc = testing.allocator;
-    const netlist = try getExampleNetlist(alloc);
-    defer netlist.deinit();
-
-    const top = netlist.value.findTopModule();
-
-    var map = try buildNetPortMap(alloc, top);
-    defer map.deinit();
 }
