@@ -14,3 +14,6 @@ pub const info = @import("./chipinfo.zig");
 test "main" {
     @import("std").testing.refAllDecls(@This());
 }
+test {
+    _ = @import("regression_test.zig");
+}

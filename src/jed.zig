@@ -290,9 +290,6 @@ test "jedutil valid jed" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    // write to temp file...
-    // make sure we delete this even if the test fails.
-    // oh, testing.TmpDir exists
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     {
@@ -309,9 +306,6 @@ test "jedutil valid bin" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    // write to temp file...
-    // make sure we delete this even if the test fails.
-    // oh, testing.TmpDir exists
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     {

@@ -1,11 +1,12 @@
 //! Describes various Yosys cells that form a Verilog to GAL
+//! This portion of the code takes a netlist and binds it to the xv8 gal
+//! specification.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const testing = std.testing;
 const assert = std.debug.assert;
-
 const chip = @import("./chipinfo.zig");
 const xv8 = @import("./gal_xV8.zig");
 const pcf = @import("./pcf.zig");
@@ -119,6 +120,10 @@ pub const OlmcCell = struct {
         const output_net = self.ref.connections.map.get("Y").?[0];
         return tm.pinmap.bimap.getA(output_net).?;
     }
+
+    pub fn registered(self: OlmcCell) bool {
+        return self.ref.getProp(u8, .param, "REGISTERED").? > 0;
+    }
 };
 
 pub const InputCell = struct {
@@ -128,20 +133,43 @@ fn ctobool(char: u8) bool {
     return switch (char) {
         '0' => false,
         '1' => true,
-        _ => unreachable,
+        else => unreachable,
     };
+}
+
+fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
+    if (tm.pinmap.bimap.getA(input)) |pin| {
+        // this case happens when a pin is not
+        return pin;
+    } else {
+        std.log.warn("Can't find pin directly for {d}, fix this and remove GAL_INPUT", .{input.N});
+        // use the ncm to find the driver
+        const pin: chip.Pin = blk: {
+            for (tm.ncm.lookup.get(input.N).?.items) |netcell| {
+                if (netcell.direction == .output or netcell.direction == .inout) {
+                    assert(std.mem.eql(u8, netcell.port, "Y"));
+                    // assert(GALCell.fromString(netcell.cell.type).? == .Input);
+                    // find the pin on the A side...
+                    const inp_cell_A = netcell.cell.connections.map.get("A").?[0];
+                    break :blk tm.pinmap.bimap.getA(inp_cell_A).?;
+                }
+            }
+            @panic("Could not find Pin on Net");
+        };
+        return pin;
+    }
 }
 pub const SopCell = struct {
     ref: *const yosys_netlist.Cell,
     /// Convert this SOP and place it on the given array2d.
-    pub fn toArray(self: SopCell, tm: *TechMap, pm: PinMap, out: *xv8.SopTerm) !void {
+    pub fn toArray(self: SopCell, tm: *TechMap, out: *xv8.SopTerm) !void {
         // extract the params.
         // depth aka number of products
         const depth = self.ref.getProp(u32, .param, "DEPTH").?;
         // width
         const width = self.ref.getProp(u32, .param, "WIDTH").?;
         // table is []const u8 still - could be huge.
-        const table = self.ref.getProp([]const u8, .param, "TABLE");
+        const table = self.ref.getProp([]const u8, .param, "TABLE").?;
         const inputs = self.ref.connections.map.get("A").?;
         assert(width == inputs.len);
         assert(table.len == width * depth * 2);
@@ -152,7 +180,8 @@ pub const SopCell = struct {
         // and set the rows based on table
         for (inputs, 0..) |input, idx| {
             // do we always have this?
-            const pin = pm.bimap.getA(input).?;
+            // const pin = tm.pinmap.bimap.getA(input).?;
+            const pin = getSopInputPin(input, tm);
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
             for (0..depth) |row| {
@@ -212,7 +241,7 @@ pub const TechMap = struct {
             .npm = npm,
             .ncm = ncm,
             .allocator = allocator,
-            .pinmap = PinMap.init(Allocator, chip_type),
+            .pinmap = try PinMap.init(allocator, chip_type),
         };
         // iterate through the cells. for each cell, determine the type.
         // now loop through OLMCs and find their parent if it exists.
@@ -230,7 +259,7 @@ pub const TechMap = struct {
             const cell_name = entry.key_ptr;
             const cell = entry.value_ptr;
 
-            std.log.debug("processing cell {s}", .{cell_name});
+            std.log.debug("processing cell {s}", .{cell_name.*});
 
             const ctype = GALCell.fromString(cell.type) orelse return TechmapError.UnknownCellType;
 
@@ -254,10 +283,33 @@ pub const TechMap = struct {
         }
     }
 
-    /// make the constraints work...
+    /// Bind the OLMCs to pins using a pinmap
     pub fn applyConstraints(self: *Self, constraints: pcf.PinConstraints) !void {
         const top = self.netlist.findTopModule();
-        try mapPins(self.allocator, self.cinmap, top.ports, constraints);
+        try bindPcf(self.allocator, &self.pinmap, top.ports, constraints);
+        // look for any remaining OLMCs that are not on a port.
+        for (self.olmcs.items) |olmc| {
+            // get the output net, check for lack of pin, map.
+            const output_net = olmc.ref.connections.map.get("Y").?[0];
+            if (self.pinmap.bimap.getA(output_net) == null) {
+                const candidate = self.pinmap.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
+                try self.pinmap.bindNet(output_net, .inout, @intCast(candidate));
+            }
+        }
+    }
+    pub fn mapChip(self: *Self) !xv8.GAL {
+        var gal = try xv8.GAL.init(self.allocator, self.chip_type);
+        for (self.olmcs.items) |olmc| {
+            const pin = olmc.getOutputPin(self);
+            std.log.info("pin is {any}", .{pin});
+            // using the pin, get the olmc index
+            const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
+            // using this, get the sop from the GAL representation
+            const sop_array = try gal.getSop(olmc_idx, !olmc.registered());
+            const sop_cell = olmc.getSop("A", self).?;
+            try sop_cell.toArray(self, sop_array);
+        }
+        return gal;
     }
 
     pub fn deinit(self: *Self) void {
@@ -266,6 +318,7 @@ pub const TechMap = struct {
         self.olmcs.deinit(self.allocator);
         self.sops.deinit(self.allocator);
         self.inputs.deinit(self.allocator);
+        self.pinmap.deinit();
     }
 };
 
@@ -278,10 +331,6 @@ test TechMap {
     defer tm.deinit();
 }
 
-fn findDriver(v: yosys_netlist.NetCellMember) bool {
-    return std.mem.eql(u8, v.port, "Y");
-}
-
 /// Maps the nets to the pins.
 /// Optionally takes a PCF constraint file to bind module's ports to
 /// specific pins.
@@ -291,11 +340,11 @@ const DeferredPort = struct {
 };
 
 /// bind the constraints from the pcf file, and then bind the remaining ports.
-fn mapPins(
+fn bindPcf(
     allocator: Allocator,
     pinmap: *PinMap,
     ports: std.json.ArrayHashMap(yosys_netlist.Port),
-    constraints: *const pcf.PinConstraints,
+    constraints: pcf.PinConstraints,
 ) !void {
     // ports that we need to assign later, after we're done with the PCF.
     var deferred_nets = std.ArrayList(DeferredPort).init(allocator);
@@ -338,8 +387,8 @@ fn mapPins(
     defer input_pins_unused.deinit(allocator);
     {
         var out_iter = pinmap.output_set.iterator(.{});
-        while (out_iter.next()) |op| {
-            input_pins_unused.unset(op);
+        while (out_iter.next()) |out_pin| {
+            input_pins_unused.unset(out_pin);
         }
     }
 
@@ -363,7 +412,7 @@ fn mapPins(
         }
     }
 }
-test mapPins {
+test bindPcf {
     const alloc = testing.allocator;
     // This is all netlist setup
     const netlist = try yosys_netlist.getExampleNetlist(alloc);
@@ -379,14 +428,5 @@ test mapPins {
     var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
     defer pa.deinit();
     const top = netlist.value.findTopModule();
-    try mapPins(alloc, &pa, top.ports, &constraints);
+    try bindPcf(alloc, &pa, top.ports, constraints);
 }
-
-// pcf constrained outputs
-// pcf bound inputs
-// unconstrained outputs
-// unconstrained inputs
-// I guess for unconstrained, we just have to prefer non-outputs if available
-// but if there's non left there's nothing we can do.
-// clock? we don't want to assign the clock to a random net, but we do need to mark it somehow
-// add new pcf file command
