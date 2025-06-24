@@ -77,7 +77,7 @@ pub const GAL = struct {
             .gal16v8 => {
                 result.ac0 = true;
                 result.syn = false;
-                // allocate ptd
+                // allocate ptd even though we don't use it.
                 result.pt = try arena.allocator().alloc(bool, 64);
             },
         }

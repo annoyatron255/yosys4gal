@@ -11,8 +11,7 @@ const yosys_netlist = lib.yosys_netlist;
 
 const CLIArgs = union(enum) {
     build: struct {
-        type: []const u8,
-        mode: []const u8,
+        type: lib.info.ChipType,
         positional: struct {
             netlist: []const u8,
             constraints: ?[]const u8 = null,
