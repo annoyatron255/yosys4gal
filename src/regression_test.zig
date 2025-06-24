@@ -16,16 +16,10 @@ const Test = struct {
     /// The name of the test file - used to find both the PCF and the netlist json
     name: []const u8,
     /// The chip we are trying to synthesize for
-    chip: ChipType,
+    chip: ChipType = .gal16v8,
     /// If we expect this test to pass or fail.
     /// If a test passes when it should fail, we print a warning to the log.
-    passes: bool,
-};
-
-const tests: []const Test = &[_]Test{
-    .{ .chip = .gal16v8, .name = "olmc_test", .passes = true },
-    .{ .chip = .gal16v8, .name = "nand_gate", .passes = true },
-    .{ .chip = .gal16v8, .name = "big_xor", .passes = true },
+    passes: bool = true,
 };
 
 /// Test helper function
@@ -78,33 +72,17 @@ fn testFitter(t: Test) anyerror!void {
     try jed.testJedutil(alloc, fmap, .jed);
 }
 test "regression_olmc_test" {
-    try testFitter(.{
-        .chip = .gal16v8,
-        .name = "olmc_test",
-        .passes = true,
-    });
+    try testFitter(.{ .name = "olmc_test" });
 }
 test "regression_big_xor" {
-    try testFitter(.{
-        .chip = .gal16v8,
-        .name = "big_xor",
-        .passes = true,
-    });
+    try testFitter(.{ .name = "big_xor" });
 }
 test "regression_tiny_xor" {
-    try testFitter(.{
-        .chip = .gal16v8,
-        .name = "tiny_xor",
-        .passes = true,
-    });
+    try testFitter(.{ .name = "tiny_xor" });
 }
-// test "regression_tristate" {
-//     try testFitter(.{
-//         .chip = .gal16v8,
-//         .name = "tristate",
-//         .passes = true,
-//     });
-// }
+test "regression_tristate" {
+    try testFitter(.{ .name = "tristate" });
+}
 // test "regression_and_gate" {
 //     try testFitter(.{
 //         .chip = .gal16v8,

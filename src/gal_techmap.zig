@@ -242,6 +242,7 @@ pub const TechMap = struct {
             .allocator = allocator,
             .pinmap = try PinMap.init(allocator, chip_type),
         };
+        errdefer self.deinit();
         // iterate through the cells. for each cell, determine the type.
         // now loop through OLMCs and find their parent if it exists.
         try self.populateArrays();
