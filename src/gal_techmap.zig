@@ -85,22 +85,18 @@ test validate {
 
 pub const OlmcCell = struct {
     // FIXME: use this.
-    const Port = enum { A, E, Y };
+    const SopPort = enum { A, E };
     ref: *yosys_netlist.Cell,
 
     /// Returns the sop cell on the port, which is one of A or E
-    pub fn getSop(self: OlmcCell, comptime port: []const u8, tm: *TechMap) ?SopCell {
-        comptime {
-            if (!std.mem.eql(u8, port, "A") and !std.mem.eql(u8, port, "E")) {
-                @compileError("Unsupported getSop Port: " ++ port);
-            }
-        }
+    pub fn getSopCell(self: OlmcCell, port: SopPort, tm: *TechMap) ?SopCell {
         var input: Net = undefined;
         {
-            const inputs = self.ref.connections.map.get(port).?;
+            const inputs = self.ref.connections.map.get(@tagName(port)).?;
             assert(inputs.len == 1);
             input = inputs[0];
         }
+        if (input != .N) return null;
         // search through the ncm to find the driver net. assert that it's a valid SOP.
         const cells_on_net = tm.ncm.lookup.get(input.N).?.items;
 
@@ -123,6 +119,9 @@ pub const OlmcCell = struct {
 
     pub fn registered(self: OlmcCell) bool {
         return self.ref.getProp(u8, .param, "REGISTERED").? > 0;
+    }
+    pub fn inverted(self: OlmcCell) bool {
+        return self.ref.getProp(u8, .param, "INVERTED").? > 0;
     }
 };
 
@@ -148,7 +147,7 @@ fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
             for (tm.ncm.lookup.get(input.N).?.items) |netcell| {
                 if (netcell.direction == .output or netcell.direction == .inout) {
                     assert(std.mem.eql(u8, netcell.port, "Y"));
-                    // assert(GALCell.fromString(netcell.cell.type).? == .Input);
+                    assert(GALCell.fromString(netcell.cell.type).? == .Input);
                     // find the pin on the A side...
                     const inp_cell_A = netcell.cell.connections.map.get("A").?[0];
                     break :blk tm.pinmap.bimap.getA(inp_cell_A).?;
@@ -249,12 +248,11 @@ pub const TechMap = struct {
 
         return self;
     }
+    /// internal function to split up the scope.
     fn populateArrays(self: *Self) !void {
         const top = self.netlist.findTopModule();
         var cells = top.cells.map.iterator();
 
-        var sop_count: usize = 0;
-        var olmc_count: usize = 0;
         while (cells.next()) |entry| {
             const cell_name = entry.key_ptr;
             const cell = entry.value_ptr;
@@ -271,13 +269,10 @@ pub const TechMap = struct {
                 .Sop => {
                     const sop: SopCell = .{ .ref = cell };
                     try self.sops.append(self.allocator, sop);
-                    sop_count += 1;
                 },
                 .Olmc => {
-                    // find the net of the output ("Y");
                     const olmc: OlmcCell = .{ .ref = cell };
                     try self.olmcs.append(self.allocator, olmc);
-                    olmc_count += 1;
                 },
             }
         }
@@ -286,7 +281,7 @@ pub const TechMap = struct {
     /// Bind the OLMCs to pins using a pinmap
     pub fn applyConstraints(self: *Self, constraints: pcf.PinConstraints) !void {
         const top = self.netlist.findTopModule();
-        try bindPcf(self.allocator, &self.pinmap, top.ports, constraints);
+        try bindPorts(self.allocator, &self.pinmap, top.ports, constraints);
         // look for any remaining OLMCs that are not on a port.
         for (self.olmcs.items) |olmc| {
             // get the output net, check for lack of pin, map.
@@ -306,8 +301,18 @@ pub const TechMap = struct {
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
             // using this, get the sop from the GAL representation
             const sop_array = try gal.getSop(olmc_idx, !olmc.registered());
-            const sop_cell = olmc.getSop("A", self).?;
+            const sop_cell = olmc.getSopCell(.A, self).?;
             try sop_cell.toArray(self, sop_array);
+            // use this olmc to map to the chip olmc
+            gal.olmcs[olmc_idx].comb = !olmc.registered();
+            gal.olmcs[olmc_idx].active_high = !olmc.inverted();
+            // finally check for tristate
+            if (olmc.getSopCell(.E, self)) |oe_sop| {
+                const oe_array = try gal.getOETerm(olmc_idx);
+
+                try oe_sop.toArray(self, oe_array);
+            }
+
         }
         return gal;
     }
@@ -339,16 +344,17 @@ const DeferredPort = struct {
     dir: yosys_netlist.PortDirection,
 };
 
-/// bind the constraints from the pcf file, and then bind the remaining ports.
-fn bindPcf(
+/// bind the ports from the pcf file, and then bind the remaining ports.
+/// NOTE: this does not handle the raw OLMCs that are only used internally.
+fn bindPorts(
     allocator: Allocator,
     pinmap: *PinMap,
     ports: std.json.ArrayHashMap(yosys_netlist.Port),
     constraints: pcf.PinConstraints,
 ) !void {
     // ports that we need to assign later, after we're done with the PCF.
-    var deferred_nets = std.ArrayList(DeferredPort).init(allocator);
-    defer deferred_nets.deinit();
+    var deferred_ports = std.ArrayList(DeferredPort).init(allocator);
+    defer deferred_ports.deinit();
     // first pass - bind PCF constrained pins.
     var port_iter = ports.map.iterator();
     while (port_iter.next()) |entry| {
@@ -362,13 +368,14 @@ fn bindPcf(
         const dir = port.direction;
         assert(port.bits.len > 0);
         if (port.bits.len == 1) {
-            // check if we have a constraint
+            // single bit port, handle it directly.
             if (constraints.get(port_name.*)) |pin| {
                 try pinmap.bindNet(port.bits[0], dir, pin);
             } else {
-                try deferred_nets.append(.{ .dir = dir, .net = port.bits[0] });
+                try deferred_ports.append(.{ .dir = dir, .net = port.bits[0] });
             }
         } else {
+            // multi-bit port - split it up here
             for (port.bits, 0..) |net, idx| {
                 // construct the port[index].
                 var buf: [100]u8 = undefined;
@@ -376,7 +383,7 @@ fn bindPcf(
                 if (constraints.get(fullname)) |pin| {
                     try pinmap.bindNet(net, dir, pin);
                 } else {
-                    try deferred_nets.append(.{ .dir = dir, .net = net });
+                    try deferred_ports.append(.{ .dir = dir, .net = net });
                 }
             }
         }
@@ -395,16 +402,12 @@ fn bindPcf(
     // Iterate through the deferred ports. if it's an input,
     // try to use the input pins first.
     // if it's an output or inout, we must use the output sets.
-    for (deferred_nets.items) |dnet| {
+    for (deferred_ports.items) |dnet| {
         if (dnet.dir == .input) {
             // pick unassigned bit from input_pins_unused;
-            var candidate = input_pins_unused.findFirstSet();
-            if (candidate == null) {
-                // we couldn't find an input pin, so let's reach for an output pin to sacrifice.
-                candidate = pinmap.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
-            }
-            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate.?));
-            input_pins_unused.unset(candidate.?);
+            const candidate = input_pins_unused.findFirstSet() orelse pinmap.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
+            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
+            input_pins_unused.unset(candidate);
         } else {
             // it's an output or inout, we can only use the output set.
             const candidate = pinmap.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
@@ -412,7 +415,7 @@ fn bindPcf(
         }
     }
 }
-test bindPcf {
+test bindPorts {
     const alloc = testing.allocator;
     // This is all netlist setup
     const netlist = try yosys_netlist.getExampleNetlist(alloc);
@@ -428,5 +431,5 @@ test bindPcf {
     var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
     defer pa.deinit();
     const top = netlist.value.findTopModule();
-    try bindPcf(alloc, &pa, top.ports, constraints);
+    try bindPorts(alloc, &pa, top.ports, constraints);
 }
