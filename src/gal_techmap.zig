@@ -287,7 +287,7 @@ pub const TechMap = struct {
             // get the output net, check for lack of pin, map.
             const output_net = olmc.ref.connections.map.get("Y").?[0];
             if (self.pinmap.bimap.getA(output_net) == null) {
-                const candidate = self.pinmap.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
+                const candidate = self.pinmap.candidate(.output) orelse return TechmapError.PinNotFound;
                 try self.pinmap.bindNet(output_net, .inout, @intCast(candidate));
             }
         }
@@ -388,31 +388,10 @@ fn bindPorts(
             }
         }
     }
-    // now clean up the deferred pins.
-    // compute non-output pins:
-    var input_pins_unused = try pinmap.unused_set.clone(allocator);
-    defer input_pins_unused.deinit(allocator);
-    {
-        var out_iter = pinmap.output_set.iterator(.{});
-        while (out_iter.next()) |out_pin| {
-            input_pins_unused.unset(out_pin);
-        }
-    }
 
-    // Iterate through the deferred ports. if it's an input,
-    // try to use the input pins first.
-    // if it's an output or inout, we must use the output sets.
     for (deferred_ports.items) |dnet| {
-        if (dnet.dir == .input) {
-            // pick unassigned bit from input_pins_unused;
-            const candidate = input_pins_unused.findFirstSet() orelse pinmap.unused_set.findFirstSet() orelse return TechmapError.PinNotFound;
-            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
-            input_pins_unused.unset(candidate);
-        } else {
-            // it's an output or inout, we can only use the output set.
-            const candidate = pinmap.output_set.findFirstSet() orelse return TechmapError.PinNotFound;
-            try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
-        }
+        const candidate = pinmap.candidate(dnet.dir) orelse return TechmapError.PinNotFound;
+        try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
     }
 }
 test bindPorts {

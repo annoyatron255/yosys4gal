@@ -108,20 +108,17 @@ pub const PinMap = struct {
         // clear bitsets
         self.unused_set.unset(pin);
         self.output_set.unset(pin);
+        self.input_set.unset(pin);
     }
 
     /// Attempts to find a valid pin that can be used for mapping.
     /// Based on the direction, it will either pull from the output_set only
     /// or from the inputs first before trying the outputs.
-    pub fn candidate(self: Self, dir: yosys_netlist.PortDirection) ?u32 {
+    pub fn candidate(self: Self, dir: yosys_netlist.PortDirection) ?usize {
         switch (dir) {
             .input => {
                 // try to find an input pin, or fall back to the unused set.
-                const p = self.input_set.findFirstSet();
-                if (p) {
-                    return p;
-                }
-                return self.unused_set.findFirstSet();
+                return self.input_set.findFirstSet() orelse self.unused_set.findFirstSet();
             },
             else => {
                 return self.output_set.findFirstSet();
