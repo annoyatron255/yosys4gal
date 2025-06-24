@@ -307,6 +307,8 @@ pub const JedMode = enum {
     bin,
 };
 
+/// Validate the fusemap with jedutil if present, skipping the test otherwise.
+/// Can only be called as part of a test
 pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void {
     const file = try std.fmt.allocPrint(alloc, "output.{s}", .{@tagName(mode)});
     defer alloc.free(file);
@@ -328,7 +330,7 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void
     proc.cwd_dir = tmp.dir;
     proc.stdout_behavior = .Ignore;
     proc.stderr_behavior = .Pipe;
-    proc.spawn() catch |err| switch (err) {
+    const res = proc.spawnAndWait() catch |err| switch (err) {
         error.FileNotFound => return error.SkipZigTest,
         else => |other| return other,
     };
@@ -337,6 +339,5 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void
     defer alloc.free(output);
     try testing.expectEqual(0, output.len);
 
-    const res = try proc.wait();
     try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
 }
