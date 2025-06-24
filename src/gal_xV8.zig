@@ -123,7 +123,7 @@ pub const GAL = struct {
     pub fn getOETerm(self: *Self, olmc_idx: usize) !*SopTerm {
         const spec = self.chip.getSpec();
         const olmc = &self.olmcs[olmc_idx];
-        if (!olmc.comb) {
+        if (!olmc.comb and spec.registered_global_oe) {
             return error.InvalidMode;
         }
         if (olmc.tristate) |existing| {
@@ -133,20 +133,6 @@ pub const GAL = struct {
         new_oe.* = try SopTerm.initSize(self.arena.allocator(), 1, spec.num_cols);
         olmc.tristate = new_oe;
         return new_oe;
-    }
-
-    pub fn setOETerm(self: *Self, olmc_idx: usize, oe: SopTerm) !void {
-        const spec = self.chip.getSpec();
-        // conditions where we can do this:
-        // - gal22v10 always
-        // - gal xv8 if the olmc is comb.
-        const olmc = self.olmcs[olmc_idx];
-        if (!olmc.comb and spec.registered_global_oe) {
-            return error.Invalid;
-        }
-
-        const term = try oe.clone(self.arena.allocator());
-        olmc.set_oe_term(term);
     }
 
     pub fn synthesize(self: *Self, fmap: *FuseMap) !void {
