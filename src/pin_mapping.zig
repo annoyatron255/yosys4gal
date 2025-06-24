@@ -42,8 +42,10 @@ pub const PinMap = struct {
 
     pub fn init(allocator: Allocator, spec: chip.ChipType) !Self {
         const info = spec.getSpec();
-        const output_set = try info.makeOlmcPinSet(allocator);
-        const unused_set = try info.makeValidPinSet(allocator);
+        var output_set = try info.makeOlmcPinSet(allocator);
+        errdefer output_set.deinit(allocator);
+        var unused_set = try info.makeValidPinSet(allocator);
+        errdefer unused_set.deinit(allocator);
         var input_pins_unused = try unused_set.clone(allocator);
         {
             var out_iter = output_set.iterator(.{});
@@ -150,4 +152,17 @@ test PinMap {
         const collide = pa.bindNet(.{ .N = 1 }, .output, 16);
         try testing.expectError(PinMap.Error.PinConsumed, collide);
     }
+}
+
+
+fn allocTester(alloc: Allocator) !void {
+    var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
+    pa.deinit();
+}
+
+test "pinmap allocations" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    try testing.checkAllAllocationFailures(alloc, allocTester, .{});
 }
