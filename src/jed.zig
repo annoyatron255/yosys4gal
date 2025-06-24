@@ -153,7 +153,7 @@ pub const FuseMap = struct {
     }
 
     /// Compute the checksum of the fuses.
-    fn computeChecksum(self: *FuseMap) u16 {
+    fn computeChecksum(self: FuseMap) u16 {
         var chksum = Checksum{};
         for (self.fuses) |fuse| {
             chksum.add(fuse);
@@ -162,7 +162,7 @@ pub const FuseMap = struct {
     }
 
     /// Write the fusemap in the jed format to the given output.
-    pub fn writeJed(self: *FuseMap, output: anytype, options: jedOptions) !void {
+    pub fn writeJed(self: FuseMap, output: anytype, options: jedOptions) !void {
         // pre alloc 8k, probably will be larger.
         var buf = try std.ArrayList(u8).initCapacity(self.allocator, 8192);
         defer buf.deinit();
@@ -228,7 +228,7 @@ pub const FuseMap = struct {
     /// Writes the binary output using jedutil's binary format.
     /// The format contains a u32 for the fuse count, and then
     /// bit-packed fuse bits. This is largely untested.
-    pub fn writeBin(self: *FuseMap, output: anytype) !void {
+    pub fn writeBin(self: FuseMap, output: anytype) !void {
         // first, write the length as a 4-byte value.
         try output.writeInt(u32, @intCast(self.fuses.len), .big);
 
@@ -290,15 +290,7 @@ test "jedutil valid jed" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    {
-        var out = try tmp.dir.createFile("output.jed", .{});
-        defer out.close();
-
-        try fmap.writeJed(out.writer(), .{});
-    }
-    try testJedutil(alloc, tmp, "output.jed");
+    try testJedutil(alloc, fmap, .jed);
 }
 test "jedutil valid bin" {
     const alloc = testing.allocator;
@@ -306,18 +298,29 @@ test "jedutil valid bin" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
+    try testJedutil(alloc, fmap, .bin);
+
+}
+
+pub const JedMode = enum {
+    jed,
+    bin,
+};
+
+pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void {
+    const file = try std.fmt.allocPrint(alloc, "output.{s}", .{@tagName(mode)});
+    defer alloc.free(file);
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     {
-        var out = try tmp.dir.createFile("output.bin", .{});
+        var out = try tmp.dir.createFile(file, .{});
         defer out.close();
 
-        try fmap.writeBin(out.writer());
+        switch (mode) {
+            .jed => try fmap.writeJed(out.writer(), .{}),
+            .bin => try fmap.writeBin(out.writer()),
+        }
     }
-    try testJedutil(alloc, tmp, "output.bin");
-}
-
-fn testJedutil(alloc: std.mem.Allocator, tmp: testing.TmpDir, file: []const u8) !void {
 
     // invoke jedutil -view output.jed gal16v8
     const args = [_][]const u8{ "jedutil", "-view", file, "gal16v8" };

@@ -9,6 +9,7 @@ const Netlist = yosys_netlist.Netlist;
 const pcf = @import("./pcf.zig");
 const xv8 = @import("./gal_xV8.zig");
 const TechMap = @import("./gal_techmap.zig").TechMap;
+const jed = @import("./jed.zig");
 const FuseMap = @import("./jed.zig").FuseMap;
 
 const Test = struct {
@@ -74,6 +75,7 @@ fn testFitter(t: Test) anyerror!void {
     );
     defer fmap.deinit();
     try gal.synthesize(&fmap);
+    try jed.testJedutil(alloc, fmap, .jed);
 }
 test "regression_olmc_test" {
     try testFitter(.{
