@@ -299,7 +299,6 @@ test "jedutil valid bin" {
 
     try fmap.set(768, true);
     try testJedutil(alloc, fmap, .bin);
-
 }
 
 pub const JedMode = enum {
@@ -330,13 +329,16 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void
     proc.cwd_dir = tmp.dir;
     proc.stdout_behavior = .Ignore;
     proc.stderr_behavior = .Pipe;
-    const res = proc.spawnAndWait() catch |err| switch (err) {
+    try proc.spawn();
+    // assert that the stderr is empty
+
+    const output = try proc.stderr.?.readToEndAlloc(alloc, 1024);
+    defer alloc.free(output);
+
+    const res = proc.wait() catch |err| switch (err) {
         error.FileNotFound => return error.SkipZigTest,
         else => |other| return other,
     };
-    // assert that the stderr is empty
-    const output = try proc.stderr.?.readToEndAlloc(alloc, 1024);
-    defer alloc.free(output);
     try testing.expectEqual(0, output.len);
 
     try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
