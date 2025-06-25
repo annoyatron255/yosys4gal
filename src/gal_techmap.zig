@@ -303,7 +303,7 @@ pub const TechMap = struct {
             // using the pin, get the olmc index
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
             // using this, get the sop from the GAL representation
-            const sop_array = try gal.getSop(olmc_idx, !olmc.registered());
+            const sop_array = try gal.getOrMakeSop(olmc_idx, !olmc.registered());
             const sop_cell = olmc.getSopCell(.A, self).?;
             try sop_cell.toArray(self, sop_array);
             // use this olmc to map to the chip olmc
@@ -349,6 +349,7 @@ const DeferredPort = struct {
 
 /// bind the ports from the pcf file, and then bind the remaining ports.
 /// NOTE: this does not handle the raw OLMCs that are only used internally.
+/// Those are handled in applyConstraints as part of the pcf.
 fn bindPorts(
     allocator: Allocator,
     pinmap: *PinMap,

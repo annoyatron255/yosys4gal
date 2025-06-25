@@ -92,7 +92,7 @@ pub const GAL = struct {
     /// it will create the SopTerm. Afterwards, it will return the same SopTerm.
     /// during the first call, `comb` is used to indicate if the OLMC is combinational
     /// or registered. When called again, it is an error to give a different value for `comb`.
-    pub fn getSop(self: *Self, olmc_idx: usize, comb: bool) !*SopTerm {
+    pub fn getOrMakeSop(self: *Self, olmc_idx: usize, comb: bool) !*SopTerm {
         const spec = self.chip.getSpec();
         const olmc = &self.olmcs[olmc_idx];
         if (olmc.output) |existing| {
@@ -116,7 +116,7 @@ pub const GAL = struct {
         const spec = self.chip.getSpec();
         const idx = spec.getOlmcIdx(pin);
         if (idx) |i| {
-            return self.getSop(i, comb);
+            return self.getOrMakeSop(i, comb);
         }
         return error.InvalidPin;
     }
@@ -154,10 +154,8 @@ pub const GAL = struct {
                     assert(tri.rows == 1);
                     assert(tri.cols == spec.num_cols);
                     try fmap.setSlice(base, tri.data.items);
-                    base += tri.data.items.len;
-                } else {
-                    base += spec.num_cols;
                 }
+                base += spec.num_cols;
             } else {
                 // we're a gall16v8 in registered mode, we shouldn't have
                 // a tristate block.
@@ -211,11 +209,11 @@ test "gal olmc comb" {
     var gal = try GAL.init(alloc, .gal16v8);
     defer gal.deinit();
     // create a random combinational term
-    const sop: *SopTerm = try gal.getSop(0, true);
-    try testing.expectEqual(sop, try gal.getSop(0, true));
+    const sop: *SopTerm = try gal.getOrMakeSop(0, true);
+    try testing.expectEqual(sop, try gal.getOrMakeSop(0, true));
     try testing.expectEqual(7, sop.rows);
     // we can't change the value of comb after we first call it
-    try testing.expectError(error.ArgumentError, gal.getSop(0, false));
+    try testing.expectError(error.ArgumentError, gal.getOrMakeSop(0, false));
     // we should be able to make an oe term.
     const oe: *SopTerm = try gal.getOETerm(0);
     try testing.expectEqual(sop.cols, oe.cols);
@@ -230,11 +228,11 @@ test "gal olmc registered" {
     var gal = try GAL.init(alloc, .gal16v8);
     defer gal.deinit();
     // create a random combinational term
-    const sop: *SopTerm = try gal.getSop(0, false);
-    try testing.expectEqual(sop, try gal.getSop(0, false));
+    const sop: *SopTerm = try gal.getOrMakeSop(0, false);
+    try testing.expectEqual(sop, try gal.getOrMakeSop(0, false));
     try testing.expectEqual(8, sop.rows);
     // we can't change the value of comb after we first call it
-    try testing.expectError(error.ArgumentError, gal.getSop(0, true));
+    try testing.expectError(error.ArgumentError, gal.getOrMakeSop(0, true));
     // can't make an oe term, since registered uses the global oe pin
     try testing.expectError(error.InvalidMode, gal.getOETerm(0));
     var fusemap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
