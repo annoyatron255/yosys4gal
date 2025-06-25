@@ -26,21 +26,9 @@ const Test = struct {
 fn testFitter(t: Test) anyerror!void {
     const alloc = testing.allocator;
     // This is all netlist setup
-    const netlist = blk: {
-        const path = try std.fmt.allocPrint(alloc, "./output/synth_{s}.json", .{t.name});
-        defer alloc.free(path);
-
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-        var reader = std.json.reader(alloc, file.reader());
-        defer reader.deinit();
-        break :blk try std.json.parseFromTokenSource(
-            Netlist,
-            alloc,
-            &reader,
-            .{ .ignore_unknown_fields = true },
-        );
-    };
+    const netlist_path = try std.fmt.allocPrint(alloc, "./output/synth_{s}.json", .{t.name});
+    defer alloc.free(netlist_path);
+    const netlist =  try yosys_netlist.readNetlist(alloc, netlist_path);
     defer netlist.deinit();
 
     var constraints = blk: {

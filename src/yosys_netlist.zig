@@ -590,14 +590,34 @@ test buildNetPortMap {
     defer map.deinit();
 }
 
+/// Helper function to read a netlist from a file path.
+pub fn readNetlist(alloc: Allocator, path: []const u8) !json.Parsed(Netlist) {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    var reader = std.json.reader(alloc, file.reader());
+    defer reader.deinit();
+    return try std.json.parseFromTokenSource(
+        Netlist,
+        alloc,
+        &reader,
+        .{ .ignore_unknown_fields = true },
+    );
+}
+
 /// Testing function to get the example netlist.
 pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
     const example = "./output/synth_olmc_test.json";
-    const file = try std.fs.cwd().openFile(example, .{});
-    defer file.close();
-    var reader = json.reader(alloc, file.reader());
-    defer reader.deinit();
-    const netlist = try json.parseFromTokenSource(Netlist, alloc, &reader, .{ .ignore_unknown_fields = true });
 
-    return netlist;
+    return readNetlist(alloc, example);
+}
+
+fn netlistAllocTest(alloc: Allocator) !void {
+    const nl = try getExampleNetlist(alloc);
+    defer nl.deinit();
+
+}
+
+test "Netlist Alloc" {
+    const alloc = testing.allocator;
+    try testing.checkAllAllocationFailures(alloc, netlistAllocTest, .{});
 }
