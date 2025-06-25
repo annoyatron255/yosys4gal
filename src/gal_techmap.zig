@@ -56,6 +56,10 @@ const GALCell = enum {
                 return @enumFromInt(idx);
             }
         }
+        // custom override for 1SOP
+        if (std.mem.eql(u8, s, "GAL_1SOP")) {
+            return .Sop;
+        }
         return null;
     }
 };
@@ -138,11 +142,9 @@ fn ctobool(char: u8) bool {
 
 fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
     if (tm.pinmap.bimap.getA(input)) |pin| {
-        // this case happens when a pin is not
         return pin;
     } else {
-        std.log.warn("Can't find pin directly for {d}, fix this and remove GAL_INPUT", .{input.N});
-        // use the ncm to find the driver
+        // This happens when a SOP input net goes through a GAL_INPUT cell.
         const pin: chip.Pin = blk: {
             for (tm.ncm.lookup.get(input.N).?.items) |netcell| {
                 if (netcell.direction == .output or netcell.direction == .inout) {

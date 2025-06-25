@@ -110,7 +110,7 @@ pub const GAL = struct {
         return newsop;
     }
 
-    /// Get an OLMC using the output pin rather than the raw index.
+    /// Get an OLMC SOP using the output pin rather than the raw index.
     pub fn getSopPin(self: *Self, pin: chipinfo.Pin, comb: bool) !*SopTerm {
         // convert the pin to the olmc index.
         const spec = self.chip.getSpec();
