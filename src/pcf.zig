@@ -6,8 +6,8 @@
 //! placed on the chip because it's a fixed pin.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
-const fixedBufferStream = std.io.fixedBufferStream;
 const log = if (builtin.is_test)
     // Downgrade `err` to `warn` for tests.
     // Zig fails any test that does `log.err`, but we want to test those code paths here.
@@ -118,26 +118,25 @@ const PcfCmd = union(enum) {
 
 /// A list of constraints binding net names to hardware pins.
 pub const PinConstraints = struct {
-    allocator: std.mem.Allocator,
-    constraints: std.StringArrayHashMap(u32),
+    const Map = std.StringHashMapUnmanaged(u32);
+    allocator: Allocator,
+    constraints: Map = .empty,
     clk_net: ?[]const u8 = null,
 
-    pub fn init(allocator: std.mem.Allocator) @This() {
+    pub fn init(allocator: Allocator) @This() {
         return .{
             .allocator = allocator,
-            .constraints = std.StringArrayHashMap(u32).init(allocator),
         };
     }
 
     pub fn deinit(self: *PinConstraints) void {
         // we have to manually free the keys
-        // do we free the values?
         var iter = self.constraints.iterator();
 
         while (iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
         }
-        self.constraints.deinit();
+        self.constraints.deinit(self.allocator);
 
         if (self.clk_net) |c| {
             self.allocator.free(c);
@@ -164,36 +163,36 @@ pub const PinConstraints = struct {
         };
         switch (command) {
             .set_io => |args| {
+                // TODO: check that this net is not a clk net.
                 // try to insert, but check for collisions.
-                const gop = try self.constraints.getOrPut(args.name);
+                const name = try self.allocator.dupe(u8, args.name);
+                errdefer self.allocator.free(name);
+                const gop = try self.constraints.getOrPut(self.allocator, name);
                 if (gop.found_existing) {
                     return PcfError.PinCollision;
                 } else {
-                    // allocate a copy of the string so we can own it.
-                    // this MUST be the same as the key we used for getOrPut
-                    gop.key_ptr.* = try self.allocator.dupe(u8, args.name);
                     gop.value_ptr.* = args.net;
                 }
             },
-            .set_clk => |args| {
+            .set_clk => |clk_name| {
+                // TODO: check that this net is not also set_io
                 if (self.clk_net) |existing| {
-                    log.err("Clock collision existing={s}, new={s}", .{ existing, args });
+                    log.err("Clock collision existing={s}, new={s}", .{ existing, clk_name });
                     return PcfError.InvalidClock;
                 }
-                self.clk_net = try self.allocator.dupe(u8, args);
+                self.clk_net = try self.allocator.dupe(u8, clk_name);
             },
         }
     }
 
     pub fn parseReader(self: *PinConstraints, reader: anytype) !void {
         var buf: [128]u8 = undefined;
-        var fbs = fixedBufferStream(&buf);
-        const writer = fbs.writer();
 
-        while (reader.streamUntilDelimiter(writer, '\n', 128)) {
-            fbs.reset();
-            const line = fbs.getWritten();
-            try self.parseLine(line);
+        while (reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            // returns null if eof
+            if (line) |l| {
+                try self.parseLine(l);
+            } else return;
         } else |err| {
             return err;
         }
@@ -248,13 +247,25 @@ test PinConstraints {
     try testing.expectError(PcfError.InvalidClock, pc.parseLine(set_clk));
 }
 
-test "PCF file" {
+fn pcfFileTest(alloc: Allocator) !void {
+    const pcf_path = "./testcases/olmc_test.pcf";
+    var pc = try readPcf(alloc, pcf_path);
+    pc.deinit();
+}
+
+test "PCF File Test" {
     const testing = std.testing;
     const alloc = testing.allocator;
-    var pc = PinConstraints.init(alloc);
-    defer pc.deinit();
-    const pcf_path = "./testcases/olmc_test.pcf";
-    const pcf_file = try std.fs.cwd().readFileAlloc(alloc, pcf_path, 8192 * 20);
-    defer alloc.free(pcf_file);
-    try pc.parseSlice(pcf_file);
+    try testing.checkAllAllocationFailures(alloc, pcfFileTest, .{});
+}
+
+///
+pub fn readPcf(allocator: Allocator, path: []const u8) !PinConstraints {
+    var pc = PinConstraints.init(allocator);
+    errdefer pc.deinit();
+    const pcf_file = try std.fs.cwd().openFile(path, .{});
+    defer pcf_file.close();
+    try pc.parseReader(pcf_file.reader());
+
+    return pc;
 }
