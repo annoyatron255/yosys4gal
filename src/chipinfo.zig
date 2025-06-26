@@ -12,12 +12,10 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 pub const ChipType = enum {
     const Self = @This();
     gal16v8,
-    // gal22v10,
 
     pub fn getSpec(self: Self) *const Spec {
         return switch (self) {
             .gal16v8 => &GAL16V8Spec,
-            // .gal22v10 => &GAL22V10Spec,
         };
     }
 };

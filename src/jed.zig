@@ -112,16 +112,16 @@ pub const FuseMap = struct {
     fuses: []bool,
 
     /// Initializes a new fuse map
-    pub fn init(allocator: std.mem.Allocator, fuses: usize, pins: usize, default_state: bool) !FuseMap {
-        const fusemap: []bool = try allocator.alloc(bool, fuses);
-        errdefer allocator.free(fusemap);
-        @memset(fusemap, default_state);
+    pub fn init(allocator: std.mem.Allocator, n_fuses: usize, pins: usize, default_state: bool) !FuseMap {
+        const fuses: []bool = try allocator.alloc(bool, n_fuses);
+        errdefer allocator.free(fuses);
+        @memset(fuses, default_state);
         return .{
             .allocator = allocator,
             .default_state = default_state,
-            .qf = fuses,
+            .qf = n_fuses,
             .qp = pins,
-            .fuses = fusemap,
+            .fuses = fuses,
         };
     }
 
@@ -190,12 +190,12 @@ pub const FuseMap = struct {
         while (i < self.fuses.len) {
             const remaining = self.fuses.len - i;
             const chunk_size = @min(options.fuse_segment_size, remaining);
-            const chunk = self.fuses[i .. i + chunk_size];
+            const chunk_bits = self.fuses[i .. i + chunk_size];
             // process this chunk.
 
             // first we check if any of the values in our chunk are not default.
             var should_write = false;
-            for (chunk) |bit| {
+            for (chunk_bits) |bit| {
                 if (bit != self.default_state) {
                     should_write = true;
                     break;
@@ -204,11 +204,11 @@ pub const FuseMap = struct {
             // if we have a non-default, we write the entire chunk.
             if (should_write) {
                 // construct the chunk_text.
-                for (chunk, 0..) |bit, idx| {
+                for (chunk_bits, 0..) |bit, idx| {
                     chunk_text[idx] = bool2char(bit);
                 }
                 // now, print the index, as well as the actual fuse contents.
-                try writer.print("L{} {s}*\n", .{ i, chunk_text });
+                try writer.print("L{} {s}*\n", .{ i, chunk_text[0..chunk_size] });
             }
 
             // move our index to where the chunk ends.

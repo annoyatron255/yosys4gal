@@ -74,13 +74,14 @@ pub const GAL = struct {
             // .gal22v10 => {
             //     // do nothing
             // },
-            .gal16v8 => {
-                result.ac0 = true;
-                result.syn = false;
-                // allocate ptd even though we don't use it.
-                result.pt = try arena.allocator().alloc(bool, 64);
-            },
+            .gal16v8 => {},
         }
+        result.ac0 = true;
+        result.syn = false;
+        // allocate ptd even though we don't use it.
+        const pt: []bool = try arena.allocator().alloc(bool, 64);
+        @memset(pt, true);
+        result.pt = pt;
         return result;
     }
 
@@ -105,7 +106,7 @@ pub const GAL = struct {
         olmc.comb = comb;
         const newsop: *SopTerm = try self.arena.allocator().create(SopTerm);
         const rows: usize = if (comb) 7 else 8;
-        newsop.* = try SopTerm.initSize(self.arena.allocator(), rows, spec.num_cols);
+        newsop.* = try SopTerm.initFilled(self.arena.allocator(), rows, spec.num_cols, false);
         olmc.output = newsop;
         return newsop;
     }
@@ -146,7 +147,8 @@ pub const GAL = struct {
             // and have local tristate in registered mode, we have
             // to do this.
             if (olmc.comb or !spec.registered_global_oe) {
-                // tristate row. write one if it exists, else
+                // tristate row. write one if it exists
+                // blank it otherwise.
                 // bump the base out.
                 if (olmc.tristate) |tri| {
                     assert(olmc.output != null);
@@ -154,6 +156,10 @@ pub const GAL = struct {
                     assert(tri.rows == 1);
                     assert(tri.cols == spec.num_cols);
                     try fmap.setSlice(base, tri.data.items);
+                } else {
+                    for (0..spec.num_cols) |i| {
+                        try fmap.set(base + i, true);
+                    }
                 }
                 base += spec.num_cols;
             } else {
@@ -188,9 +194,11 @@ pub const GAL = struct {
             try fmap.set(base, olmc.comb);
             base += 1;
         }
-        if (self.pt) |ptd| {
-            try fmap.setSlice(base, ptd);
-            base += ptd.len;
+        if (self.pt != null) {
+            //FIXME: ptd is corrupting??
+            const data = &[_]bool{true} ** 64;
+            try fmap.setSlice(base, data);
+            base += data.len;
         } else {
             // we don't support this case yet, 22v10
             unreachable;

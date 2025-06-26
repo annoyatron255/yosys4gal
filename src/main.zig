@@ -2,8 +2,13 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 
+const std = @import("std");
+
+/// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
+const lib = @import("mkjed_lib");
 const flags = @import("./util/flags.zig");
 
+const pcf = lib.pcf;
 test {
     _ = flags;
 }
@@ -11,9 +16,9 @@ const yosys_netlist = lib.yosys_netlist;
 
 const CLIArgs = union(enum) {
     build: struct {
-        type: lib.info.ChipType,
+        output: ?[]const u8 = null,
         positional: struct {
-            netlist: []const u8,
+            netlist: []const u8 = "",
             constraints: ?[]const u8 = null,
         },
     },
@@ -39,24 +44,58 @@ pub fn main() !void {
             try validateNetlist(v.verbose, v.positional.file);
         },
         .build => |b| {
-            _ = b;
+            try build(.gal16v8, b.positional.netlist, b.positional.constraints, b.output);
         },
     }
+}
+
+pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[]const u8, output: ?[]const u8) !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    const netlist = try yosys_netlist.readNetlist(allocator, netlist_path);
+    defer netlist.deinit();
+    var constraints: pcf.PinConstraints = blk: {
+        if (pcf_path) |path| {
+            break :blk try pcf.readPcf(allocator, path);
+        }
+        break :blk pcf.PinConstraints.init(allocator);
+    };
+    defer constraints.deinit();
+
+    const out_writer = blk: {
+        if (output) |out_path| {
+            break :blk try std.fs.cwd().openFile(out_path, .{});
+        } else {
+            break :blk std.io.getStdOut();
+        }
+    };
+
+    var tm = try lib.techmap.TechMap.init(allocator, chiptype, &netlist.value);
+    defer tm.deinit();
+    try tm.applyConstraints(constraints);
+    // create the gal
+    var gal = try tm.mapChip();
+    defer gal.deinit();
+    // create the fuse map and then synthesize.
+    var fmap = try lib.jed.FuseMap.init(
+        allocator,
+        chiptype.getSpec().fusemap_size,
+        chiptype.getSpec().num_pins,
+        false,
+    );
+    defer fmap.deinit();
+    try gal.synthesize(&fmap);
+
+    try fmap.writeJed(out_writer, .{});
+
 }
 
 pub fn validateNetlist(verbose: bool, path: []const u8) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     _ = verbose;
-    const f = try std.fs.cwd().readFileAlloc(allocator, path, 8192 * 4096);
-    defer allocator.free(f);
-    const netlist = try std.json.parseFromSlice(yosys_netlist.Netlist, allocator, f, .{
-        .ignore_unknown_fields = true,
-    });
+    const netlist = try yosys_netlist.readNetlist(allocator, path);
     defer netlist.deinit();
 }
 
-const std = @import("std");
-
-/// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
-const lib = @import("mkjed_lib");

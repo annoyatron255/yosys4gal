@@ -127,6 +127,16 @@ pub const OlmcCell = struct {
     pub fn inverted(self: OlmcCell) bool {
         return self.ref.getProp(u8, .param, "INVERTED").? > 0;
     }
+    pub fn format(self: *const OlmcCell, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len != 0) {
+            std.fmt.invalidFmtError(fmt, self);
+        }
+        const reg = self.registered();
+        const inv = self.inverted();
+        const output_net = self.ref.connections.map.get("Y").?[0];
+
+        return writer.print("OLMC(inv={}, reg={}, out_net={})", .{ inv, reg, output_net });
+    }
 };
 
 pub const InputCell = struct {
@@ -174,14 +184,18 @@ pub const SopCell = struct {
         const inputs = self.ref.connections.map.get("A").?;
         assert(width == inputs.len);
         assert(table.len == width * depth * 2);
+        // set the entire row to 1 first - then clear bits.
+        for (0..depth) |row| {
+            for (0..out.cols) |i| {
+                out.set(row, i, true);
+            }
+        }
 
         // look at each input, map to net, then pin.
         // based on the pin compute the column we need to edit.
         // then go through each product term with that input,
         // and set the rows based on table
         for (inputs, 0..) |input, idx| {
-            // do we always have this?
-            // const pin = tm.pinmap.bimap.getA(input).?;
             const pin = getSopInputPin(input, tm);
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
@@ -189,8 +203,8 @@ pub const SopCell = struct {
                 // width * row -> put us in the correct product
                 // idx * 2 - select inside the product
                 const pos = width * row + idx * 2;
-                out.set(row, col, ctobool(table[pos]));
-                out.set(row, col + 1, ctobool(table[pos + 1]));
+                out.set(row, col, !ctobool(table[pos]));
+                out.set(row, col + 1, !ctobool(table[pos + 1]));
             }
         }
     }
@@ -234,15 +248,19 @@ pub const TechMap = struct {
         netlist: *const Netlist,
     ) !Self {
         const top = netlist.findTopModule();
-        const ncm = try yosys_netlist.buildNetCellMap(allocator, top);
-        const npm = try yosys_netlist.buildNetPortMap(allocator, top);
+        var ncm = try yosys_netlist.buildNetCellMap(allocator, top);
+        errdefer ncm.deinit();
+        var npm = try yosys_netlist.buildNetPortMap(allocator, top);
+        errdefer npm.deinit();
+
+        const pm = try PinMap.init(allocator, chip_type);
         var self = Self{
             .chip_type = chip_type,
             .netlist = netlist,
             .npm = npm,
             .ncm = ncm,
             .allocator = allocator,
-            .pinmap = try PinMap.init(allocator, chip_type),
+            .pinmap = pm,
         };
         errdefer self.deinit();
         // iterate through the cells. for each cell, determine the type.
@@ -298,10 +316,12 @@ pub const TechMap = struct {
     pub fn mapChip(self: *Self) !xv8.GAL {
         var gal = try xv8.GAL.init(self.allocator, self.chip_type);
         for (self.olmcs.items) |olmc| {
+            std.log.debug("OLMC = {any}", .{olmc});
             const pin = olmc.getOutputPin(self);
             std.log.info("pin is {any}", .{pin});
             // using the pin, get the olmc index
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
+            std.log.debug("index is {d}", .{olmc_idx});
             // using this, get the sop from the GAL representation
             const sop_array = try gal.getOrMakeSop(olmc_idx, !olmc.registered());
             const sop_cell = olmc.getSopCell(.A, self).?;
@@ -315,7 +335,6 @@ pub const TechMap = struct {
 
                 try oe_sop.toArray(self, oe_array);
             }
-
         }
         return gal;
     }
