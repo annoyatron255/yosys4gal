@@ -429,7 +429,7 @@ pub fn NetMap(comptime T: type) type {
 pub fn NetMapMany(comptime T: type) type {
     return struct {
         const Self = @This();
-        const LookupTable = std.AutoArrayHashMapUnmanaged(u32, std.ArrayListUnmanaged(T));
+        const LookupTable = std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(T));
 
         gpa: Allocator,
         lookup: LookupTable,
@@ -442,9 +442,9 @@ pub fn NetMapMany(comptime T: type) type {
         }
         pub fn deinit(self: *Self) void {
             // cleanup the arraylists
-            const vals = self.lookup.values();
-            for (vals) |*val| {
-                val.deinit(self.gpa);
+            var vals = self.lookup.iterator();
+            while (vals.next()) |entry| {
+                entry.value_ptr.deinit(self.gpa);
             }
             // cleanup the lookup
             self.lookup.deinit(self.gpa);
@@ -459,7 +459,7 @@ pub fn NetMapMany(comptime T: type) type {
             // invariant: key is either null or non-empty arraylist.
             // it can never be an empty arraylist.
             if (!gop.found_existing) {
-                gop.value_ptr.* = try std.ArrayListUnmanaged(T).initCapacity(self.gpa, 8);
+                gop.value_ptr.* = .empty; // try std.ArrayListUnmanaged(T).initCapacity(self.gpa, 8);
             }
             try gop.value_ptr.append(self.gpa, value);
         }
@@ -491,6 +491,7 @@ pub const NetCellMember = struct {
 /// Create a map that gives a list of cells when provided with a non-constant net.
 pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap {
     var map = try NetCellMap.init(allocator);
+    errdefer map.deinit();
 
     var cells = module.cells.map.iterator();
 
@@ -521,9 +522,7 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
     return map;
 }
 
-test buildNetCellMap {
-    const alloc = testing.allocator;
-    // This is all netlist setup
+fn testNetCellMap(alloc: Allocator) !void {
     const netlist = try getExampleNetlist(alloc);
     defer netlist.deinit();
 
@@ -547,6 +546,16 @@ test buildNetCellMap {
     const expected = top.cells.map.getPtr("$iopadmap$olmc_test.AND") orelse unreachable;
     const actual = net.cell;
     try testing.expectEqual(expected, actual);
+
+}
+
+test buildNetCellMap {
+    const alloc = testing.allocator;
+    // getOrPut can swallow OOM if the key already exists.
+    testing.checkAllAllocationFailures(alloc, testNetCellMap, .{}) catch |err| switch (err) {
+        error.SwallowedOutOfMemoryError => return,
+        else => return err,
+    };
 }
 
 /// Mapping of nets to ports. a net can belong to more than one port?
@@ -560,6 +569,7 @@ pub const NetPortMember = struct {
 
 pub fn buildNetPortMap(allocator: Allocator, module: *const Module) !NetPortMap {
     var map = try NetPortMap.init(allocator);
+    errdefer map.deinit();
     var ports = module.ports.map.iterator();
 
     while (ports.next()) |entry| {

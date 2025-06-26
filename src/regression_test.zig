@@ -1,6 +1,7 @@
 //! Regression test framework.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const testing = std.testing;
 const chipinfo = @import("./chipinfo.zig");
 const ChipType = chipinfo.ChipType;
@@ -23,24 +24,16 @@ const Test = struct {
 };
 
 /// Test helper function
-fn testFitter(t: Test) anyerror!void {
-    const alloc = testing.allocator;
+fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
     // This is all netlist setup
     const netlist_path = try std.fmt.allocPrint(alloc, "./output/synth_{s}.json", .{t.name});
     defer alloc.free(netlist_path);
-    const netlist =  try yosys_netlist.readNetlist(alloc, netlist_path);
+    const netlist = try yosys_netlist.readNetlist(alloc, netlist_path);
     defer netlist.deinit();
 
-    var constraints = blk: {
-        var c = pcf.PinConstraints.init(alloc);
-
-        const path = try std.fmt.allocPrint(alloc, "./testcases/{s}.pcf", .{t.name});
-        defer alloc.free(path);
-        const pcf_file = try std.fs.cwd().readFileAlloc(alloc, path, 10 * 1024);
-        defer alloc.free(pcf_file);
-        try c.parseSlice(pcf_file);
-        break :blk c;
-    };
+    const path = try std.fmt.allocPrint(alloc, "./testcases/{s}.pcf", .{t.name});
+    defer alloc.free(path);
+    var constraints = try pcf.readPcf(alloc, path);
     defer constraints.deinit();
     var tm = try TechMap.init(alloc, t.chip, &netlist.value);
     defer tm.deinit();
@@ -58,6 +51,12 @@ fn testFitter(t: Test) anyerror!void {
     defer fmap.deinit();
     try gal.synthesize(&fmap);
     try jed.testJedutil(alloc, fmap, .jed);
+}
+
+fn testFitter(t: Test) !void {
+    const alloc = testing.allocator;
+    // try testing.checkAllAllocationFailures(alloc, testFitterImpl, .{t});
+    try testFitterImpl(alloc, t);
 }
 test "regression_olmc_test" {
     try testFitter(.{ .name = "olmc_test" });
