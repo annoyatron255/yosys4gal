@@ -65,7 +65,7 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
 
     const out_writer = blk: {
         if (output) |out_path| {
-            break :blk try std.fs.cwd().openFile(out_path, .{});
+            break :blk try std.fs.cwd().createFile(out_path, .{});
         } else {
             break :blk std.io.getStdOut();
         }

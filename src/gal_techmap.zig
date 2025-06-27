@@ -375,6 +375,7 @@ fn bindPorts(
     ports: std.json.ArrayHashMap(yosys_netlist.Port),
     constraints: pcf.PinConstraints,
 ) !void {
+    //TODO: make this public/common? I feel like this logic is pretty universal.
     // ports that we need to assign later, after we're done with the PCF.
     var deferred_ports = std.ArrayList(DeferredPort).init(allocator);
     defer deferred_ports.deinit();

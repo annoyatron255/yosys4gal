@@ -1,6 +1,8 @@
-//! Mapping from nets to chip pins.
-//! Is used during the fitting process. We provide low level functions
-//! but the algorithms belong in the techmap file.
+//! Pin constraint mapping helper.
+//! Unlike PCF, which maps Port Name -> Pin, this maps Net -> Pin.
+//! The primary use is to first fill with PCF constraints
+//! and then bind the remaining unconstrained ports
+//! and finally the OLMCs.
 
 const std = @import("std");
 const builtin = @import("builtin");
