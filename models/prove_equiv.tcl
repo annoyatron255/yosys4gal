@@ -99,5 +99,4 @@ design -copy-from __original -as __original A:top
 equiv_make __original __wrapper equiv
 tribuf -formal equiv
 equiv_induct equiv
-shell
 equiv_status -assert equiv
