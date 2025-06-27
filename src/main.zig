@@ -16,10 +16,13 @@ const yosys_netlist = lib.yosys_netlist;
 
 const CLIArgs = union(enum) {
     build: struct {
-        output: ?[]const u8 = null,
+        binary: bool = false,
+        // add this back when we support 22v10
+        // chiptype: lib.info.ChipType = .gal16v8,
         positional: struct {
-            netlist: []const u8 = "",
+            netlist: []const u8,
             constraints: ?[]const u8 = null,
+            output: ?[]const u8 = null,
         },
     },
     validate: struct {
@@ -30,7 +33,7 @@ const CLIArgs = union(enum) {
     },
 
     pub const help =
-        \\ mkjed build --type=<type> --mode=<mode> <netlist> [constraints]
+        \\ mkjed build [--binary] [--chiptype=<type>] <netlist> [constraints] [output]
         \\ mkjed validate [--verbose] <file>
         \\
     ;
@@ -44,7 +47,12 @@ pub fn main() !void {
             try validateNetlist(v.verbose, v.positional.file);
         },
         .build => |b| {
-            try build(.gal16v8, b.positional.netlist, b.positional.constraints, b.output);
+            try build(
+                .gal16v8,
+                b.positional.netlist,
+                b.positional.constraints,
+                b.positional.output,
+            );
         },
     }
 }
@@ -88,7 +96,6 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     try gal.synthesize(&fmap);
 
     try fmap.writeJed(out_writer, .{});
-
 }
 
 pub fn validateNetlist(verbose: bool, path: []const u8) !void {
@@ -98,4 +105,3 @@ pub fn validateNetlist(verbose: bool, path: []const u8) !void {
     const netlist = try yosys_netlist.readNetlist(allocator, path);
     defer netlist.deinit();
 }
-
