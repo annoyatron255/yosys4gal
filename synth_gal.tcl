@@ -1,6 +1,7 @@
 #!/usr/bin/env -S yosys -c
 yosys -import
 
+set scriptDir [file dirname [file normalize [info script]]]
 ## Check arguments
 if { $argc != 1 && $argc != 2 } {
 	puts "USAGE: $argv0 -- <VERILOG FILE> \[CHIP\]"
@@ -27,8 +28,8 @@ if {$target == "GAL16V8"} {
 ## Read Verilog/Liberty file
 read_verilog [lindex $argv 0]
 hierarchy -auto-top
-read_verilog -lib cells_sim.v
-read_liberty -lib techmaps/gal_dff.lib
+read_verilog -lib ${scriptDir}/cells_sim.v
+read_liberty -lib ${scriptDir}/techmaps/gal_dff.lib
 
 ## First pass synthesis
 tribuf
@@ -39,7 +40,7 @@ design -save preop
 iopadmap -bits -inpad GAL_INPUT Y:A -toutpad GAL_TRI E:A:Y -tinoutpad GAL_TRI E:Y:A
 
 ## DFF/SOP mapping
-dfflibmap -liberty techmaps/gal_dff.lib
+dfflibmap -liberty ${scriptDir}/techmaps/gal_dff.lib
 
 # Get count of non-clock inputs and registers
 set num_inputs [regexp -inline {\d+} [tee -s result.string select -count t:GAL_INPUT]]
@@ -68,39 +69,39 @@ clean -purge
 ## Tech mapping
 # PLAs
 techmap -map techmaps/pla.v -D PLA_MAX_PRODUCTS=$num_max_products
-techmap -max_iter 1 -map techmaps/trivial_sop.v
+techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_sop.v
 
 # Sequential OLMC 
-extract -constports -map extractions/ndff.v
-extract -constports -map extractions/tristate.v
-techmap -map techmaps/olmc_seq.v
+extract -constports -map ${scriptDir}/extractions/ndff.v
+extract -constports -map ${scriptDir}/extractions/tristate.v
+techmap -map ${scriptDir}/techmaps/olmc_seq.v
 
 # Make 1SOPs for combinational tristates
-techmap -max_iter 1 -map techmaps/one_sop.v */t:GAL_TRI "%x:+\[E\]" */t:GAL_TRI %d %ci1 */t:GAL_SOP %i
-techmap -max_iter 1 -map techmaps/one_sop.v */t:GAL_TRI_N "%x:+\[E\]" */t:GAL_TRI_N %d %ci1 */t:GAL_SOP %i
+techmap -max_iter 1 -map ${scriptDir}/techmaps/one_sop.v */t:GAL_TRI "%x:+\[E\]" */t:GAL_TRI %d %ci1 */t:GAL_SOP %i
+techmap -max_iter 1 -map ${scriptDir}/techmaps/one_sop.v */t:GAL_TRI_N "%x:+\[E\]" */t:GAL_TRI_N %d %ci1 */t:GAL_SOP %i
 
 # Make 1SOPs for registered OLMC tristates
 techmap -max_iter 1 -map techmaps/one_sop.v */t:GAL_OLMC "%x:+\[E\]" */t:GAL_OLMC %d %ci1 */t:GAL_SOP %i
 
 # Add OLMC for internal GAL_SOPs
 #techmap -max_iter 1 -map techmaps/pla_olmc_int.v */t:GAL_OLMC %ci2 */t:GAL_SOP %i */t:GAL_SOP %D
-techmap -max_iter 1 -map techmaps/pla_olmc_int.v */t:GAL_SOP %co1 */w:* %i */t:GAL_SOP %ci1 */w:* %i %i %c %ci1 %D
+techmap -max_iter 1 -map ${scriptDir}/techmaps/pla_olmc_int.v */t:GAL_SOP %co1 */w:* %i */t:GAL_SOP %ci1 */w:* %i %i %c %ci1 %D
 
 # Add OLMC for internal GAL_SOPs attached to enable lines
-techmap -max_iter 1 -map techmaps/pla_olmc_int.v */t:GAL_SOP %co1 */w:* %i */t:GAL_OLMC "%ci1:+\[E\]" */w:* %i %i %c %ci1 %D
+techmap -max_iter 1 -map ${scriptDir}/techmaps/pla_olmc_int.v */t:GAL_SOP %co1 */w:* %i */t:GAL_OLMC "%ci1:+\[E\]" */w:* %i %i %c %ci1 %D
 
 # Combinational OLMC
 iopadmap -bits -outpad GAL_COMB_OUTPUT_P A:Y */t:GAL_SOP "%x:+\[Y\]" */t:GAL_SOP %d o:* %i
-techmap -map techmaps/olmc_comb.v
+techmap -map ${scriptDir}/techmaps/olmc_comb.v
 
 # Add trivial SOPs between directly connected OLMCs
-techmap -max_iter 1 -map techmaps/trivial_sop_olmc.v */t:GAL_OLMC "%ci1:+\[A\]" */w:* %i */t:GAL_SOP %co1 */w:* %i %i %c %co1 %D */t:GAL_OLMC %D
+techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_sop_olmc.v */t:GAL_OLMC "%ci1:+\[A\]" */w:* %i */t:GAL_SOP %co1 */w:* %i %i %c %co1 %D */t:GAL_OLMC %D
 
 # Add trivial SOPs between directly connected OLMCs and INPUTs
-techmap -max_iter 1 -map techmaps/trivial_sop_olmc.v */t:GAL_OLMC "%ci1:+\[A\]" */w:* %i */t:GAL_INPUT %co1 */w:* %i %i %c %co1 %D
+techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_sop_olmc.v */t:GAL_OLMC "%ci1:+\[A\]" */w:* %i */t:GAL_INPUT %co1 */w:* %i %i %c %co1 %D
 
 # Add trivial 1SOPs between directly connected OLMC enables and INPUTs
-techmap -max_iter 1 -map techmaps/trivial_1sop_olmc.v */t:GAL_OLMC "%ci1:+\[E\]" */w:* %i */t:GAL_INPUT %co1 */w:* %i %i %c %co1 %D
+techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_1sop_olmc.v */t:GAL_OLMC "%ci1:+\[E\]" */w:* %i */t:GAL_INPUT %co1 */w:* %i %i %c %co1 %D
 
 clean -purge
 
@@ -115,7 +116,7 @@ design -copy-from preop -as gold A:top
 design -copy-from postop -as gate A:top
 
 # Inverse tech map into primatives
-techmap -autoproc -map cells_sim.v
+techmap -autoproc -map ${scriptDir}/cells_sim.v
 clean -purge
 
 # Verify

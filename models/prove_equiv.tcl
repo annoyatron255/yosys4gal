@@ -1,6 +1,6 @@
 #!/usr/bin/env -S yosys -c
 yosys -import
-
+set scriptDir [file dirname [file normalize [info script]]]
 # Parse arguments
 if {$argc < 3} {
 	puts "USAGE: $argv0 -- <JEDEC_FILE> <PCF_FILE> <VERILOG FILES> ..."
@@ -65,7 +65,7 @@ select -clear
 design -stash __original
 
 # Read and synthesize GAL model
-read_verilog ${chip}_wrapper.v ${chip}_reg.v
+read_verilog ${scriptDir}/${chip}_wrapper.v ${scriptDir}/${chip}_reg.v
 
 tribuf
 synth
