@@ -17,6 +17,20 @@ const Netlist = yosys_netlist.Netlist;
 const PinMap = @import("./pin_mapping.zig").PinMap;
 const Array2D = @import("./util/array2d.zig").Array2D;
 const BiMap = @import("./util/bimap.zig").BiMap;
+const builtin = @import("builtin");
+
+const log = if (builtin.is_test)
+    // Downgrade `err` to `warn` for tests.
+    // Zig fails any test that does `log.err`, but we want to test those code paths here.
+    struct {
+        const base = std.log.scoped(.techmap_gal);
+        const err = warn;
+        const warn = base.warn;
+        const info = base.info;
+        const debug = base.debug;
+    }
+else
+    std.log.scoped(.techmap_gal);
 
 // Validation function that ensures that the netlist is using our techmap.
 /// One of the invariants we assume about the gal netlist is invalid.
@@ -278,7 +292,7 @@ pub const TechMap = struct {
             const cell_name = entry.key_ptr;
             const cell = entry.value_ptr;
 
-            std.log.debug("processing cell {s}", .{cell_name.*});
+            log.debug("processing cell {s}", .{cell_name.*});
 
             const ctype = GALCell.fromString(cell.type) orelse return TechmapError.UnknownCellType;
 
@@ -302,7 +316,7 @@ pub const TechMap = struct {
     /// Bind the OLMCs to pins using a pinmap
     pub fn applyConstraints(self: *Self, constraints: pcf.PinConstraints) !void {
         const top = self.netlist.findTopModule();
-        try bindPorts(self.allocator, &self.pinmap, top.ports, constraints);
+        try bindPorts(self.allocator, self.chip_type, &self.pinmap, top.ports, constraints);
         // look for any remaining OLMCs that are not on a port.
         for (self.olmcs.items) |olmc| {
             // get the output net, check for lack of pin, map.
@@ -316,12 +330,12 @@ pub const TechMap = struct {
     pub fn mapChip(self: *Self) !xv8.GAL {
         var gal = try xv8.GAL.init(self.allocator, self.chip_type);
         for (self.olmcs.items) |olmc| {
-            std.log.debug("OLMC = {any}", .{olmc});
+            log.debug("OLMC = {any}", .{olmc});
             const pin = olmc.getOutputPin(self);
-            std.log.info("pin is {any}", .{pin});
+            log.info("pin is {any}", .{pin});
             // using the pin, get the olmc index
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
-            std.log.debug("index is {d}", .{olmc_idx});
+            log.debug("index is {d}", .{olmc_idx});
             // using this, get the sop from the GAL representation
             const sop_array = try gal.getOrMakeSop(olmc_idx, !olmc.registered());
             const sop_cell = olmc.getSopCell(.A, self).?;
@@ -366,11 +380,35 @@ const DeferredPort = struct {
     dir: yosys_netlist.PortDirection,
 };
 
+fn bindSinglePort(
+    port_name: []const u8,
+    dir: yosys_netlist.PortDirection,
+    net: yosys_netlist.Net,
+    chip_type: chip.ChipType,
+    deferred_ports: *std.ArrayList(DeferredPort),
+    constraints: pcf.PinConstraints,
+    pinmap: *PinMap,
+) !void {
+    if (constraints.get(port_name)) |pin| {
+        if (chip_type.getSpec().pinFromInt(pin) != null) {
+            try pinmap.bindNet(net, dir, pin);
+        } else {
+            log.warn("Port {s} constrained to invalid pin {d}", .{
+                port_name,
+                pin,
+            });
+        }
+    } else {
+        try deferred_ports.append(.{ .dir = dir, .net = net });
+    }
+}
+
 /// bind the ports from the pcf file, and then bind the remaining ports.
 /// NOTE: this does not handle the raw OLMCs that are only used internally.
 /// Those are handled in applyConstraints as part of the pcf.
 fn bindPorts(
     allocator: Allocator,
+    chip_type: chip.ChipType,
     pinmap: *PinMap,
     ports: std.json.ArrayHashMap(yosys_netlist.Port),
     constraints: pcf.PinConstraints,
@@ -393,22 +431,30 @@ fn bindPorts(
         assert(port.bits.len > 0);
         if (port.bits.len == 1) {
             // single bit port, handle it directly.
-            if (constraints.get(port_name.*)) |pin| {
-                try pinmap.bindNet(port.bits[0], dir, pin);
-            } else {
-                try deferred_ports.append(.{ .dir = dir, .net = port.bits[0] });
-            }
+            try bindSinglePort(
+                port_name.*,
+                dir,
+                port.bits[0],
+                chip_type,
+                &deferred_ports,
+                constraints,
+                pinmap,
+            );
         } else {
             // multi-bit port - split it up here
             for (port.bits, 0..) |net, idx| {
                 // construct the port[index].
                 var buf: [100]u8 = undefined;
                 const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name, idx });
-                if (constraints.get(fullname)) |pin| {
-                    try pinmap.bindNet(net, dir, pin);
-                } else {
-                    try deferred_ports.append(.{ .dir = dir, .net = net });
-                }
+                try bindSinglePort(
+                    fullname,
+                    dir,
+                    net,
+                    chip_type,
+                    &deferred_ports,
+                    constraints,
+                    pinmap,
+                );
             }
         }
     }
@@ -431,8 +477,8 @@ test bindPorts {
     defer constraints.deinit();
     try constraints.parseSlice(pcf_file);
 
-    var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
+    var pa = try PinMap.init(alloc, .gal16v8);
     defer pa.deinit();
     const top = netlist.value.findTopModule();
-    try bindPorts(alloc, &pa, top.ports, constraints);
+    try bindPorts(alloc, .gal16v8, &pa, top.ports, constraints);
 }
