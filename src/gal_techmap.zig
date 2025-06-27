@@ -196,8 +196,8 @@ pub const SopCell = struct {
         // table is []const u8 still - could be huge.
         const table = self.ref.getProp([]const u8, .param, "TABLE").?;
         const inputs = self.ref.connections.map.get("A").?;
-        assert(width == inputs.len);
-        assert(table.len == width * depth * 2);
+        assert(depth <= out.rows);
+        assert(width <= out.cols / 2);
         // set the entire row to 1 first - then clear bits.
         for (0..depth) |row| {
             for (0..out.cols) |i| {
@@ -214,9 +214,12 @@ pub const SopCell = struct {
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
             for (0..depth) |row| {
+                // the table is actually backwards from how we expect it.
+                const reverse_idx = inputs.len - 1 - idx;
                 // width * row -> put us in the correct product
                 // idx * 2 - select inside the product
-                const pos = width * row + idx * 2;
+                const pos = (width * row * 2 + reverse_idx * 2);
+
                 out.set(row, col, !ctobool(table[pos]));
                 out.set(row, col + 1, !ctobool(table[pos + 1]));
             }
