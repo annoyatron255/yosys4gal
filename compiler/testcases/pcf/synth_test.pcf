@@ -1,7 +1,0 @@
-set_io clk 1
-set_io A 3
-set_io B 4
-set_io AND 13
-set_io NAND 14
-set_io REG_AND 15
-set_io REG_NAND 16
