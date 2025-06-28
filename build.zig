@@ -101,12 +101,14 @@ pub fn build(b: *std.Build) void {
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
         .root_module = lib_mod,
+        .filters = b.args orelse &.{},
     });
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
+        .filters = b.args orelse &.{},
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
