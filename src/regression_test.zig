@@ -89,7 +89,7 @@ fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
     );
     defer fmap.deinit();
     try gal.synthesize(&fmap);
-    try jed.testJedutil(alloc, fmap, .jed);
+    try jed.testJedutil(alloc, fmap, t.chip, .jed);
     try equivalence(alloc, t.name, fmap);
 }
 

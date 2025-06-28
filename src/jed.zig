@@ -12,6 +12,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 const builtin = @import("builtin");
+const chipinfo = @import("./chipinfo.zig");
 const meta = @import("meta");
 
 fn bool2char(val: bool) u8 {
@@ -290,7 +291,7 @@ test "jedutil valid jed" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    try testJedutil(alloc, fmap, .jed);
+    try testJedutil(alloc, fmap, .gal16v8, .jed);
 }
 test "jedutil valid bin" {
     const alloc = testing.allocator;
@@ -298,7 +299,7 @@ test "jedutil valid bin" {
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    try testJedutil(alloc, fmap, .bin);
+    try testJedutil(alloc, fmap, .gal16v8, .bin);
 }
 
 pub const JedMode = enum {
@@ -308,7 +309,7 @@ pub const JedMode = enum {
 
 /// Validate the fusemap with jedutil if present, skipping the test otherwise.
 /// Can only be called as part of a test
-pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void {
+pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipType, mode: JedMode) !void {
     const file = try std.fmt.allocPrint(alloc, "output.{s}", .{@tagName(mode)});
     defer alloc.free(file);
     var tmp = testing.tmpDir(.{});
@@ -324,7 +325,7 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, mode: JedMode) !void
     }
 
     // invoke jedutil -view output.jed gal16v8
-    const args = [_][]const u8{ "jedutil", "-view", file, "gal16v8" };
+    const args = [_][]const u8{ "jedutil", "-view", file, @tagName(chip) };
     var proc = std.process.Child.init(&args, alloc);
     proc.cwd_dir = tmp.dir;
     proc.stdout_behavior = .Ignore;
