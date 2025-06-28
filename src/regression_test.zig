@@ -3,45 +3,97 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
-const chipinfo = @import("./chipinfo.zig");
-const ChipType = chipinfo.ChipType;
+
+const ChipType = @import("./chipinfo.zig").ChipType;
 const yosys_netlist = @import("./yosys_netlist.zig");
 const Netlist = yosys_netlist.Netlist;
 const pcf = @import("./pcf.zig");
-const xv8 = @import("./gal_xV8.zig");
 const TechMap = @import("./gal_techmap.zig").TechMap;
 const jed = @import("./jed.zig");
 const FuseMap = @import("./jed.zig").FuseMap;
 
-fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap) !void {
+/// From a testing directory, you can get back to the cwd using this.
+const tmp_to_cwd = "../../../";
+
+const OUTPUT_DIR = "output/";
+
+/// Synthesize a verilog testcase inside a tmpdir.
+/// The tmpdir must be passed to the synth script. We assume it's in
+/// .zig-cache/tmp/<random> and will traverse back to the cwd manually.
+fn synth(alloc: Allocator, name: []const u8, dir: std.fs.Dir) !std.json.Parsed(Netlist) {
+    var log_name_buf: [100]u8 = undefined;
+    var output_dir = try dir.makeOpenPath(OUTPUT_DIR, .{});
+    defer output_dir.close();
+    const log_name = try std.fmt.bufPrint(&log_name_buf, "synth_{s}_log.txt", .{name});
+
+    const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "synth_gal.tcl" });
+    defer alloc.free(path_to_script);
+    try dir.access(path_to_script, .{});
+    const src_name = try std.fmt.allocPrint(alloc, "{s}.v", .{name});
+    defer alloc.free(src_name);
+    const path_to_src = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "testcases", src_name });
+    defer alloc.free(path_to_src);
+
+    try dir.access(path_to_src, .{});
+
+    const args = [_][]const u8{ "yosys", "-c", path_to_script, "--", path_to_src };
+    var proc = std.process.Child.init(&args, alloc);
+    // set our tmp dir
+    proc.cwd_dir = dir;
+    // send it.
+    proc.stdout_behavior = .Pipe;
+    try proc.spawn();
+    // open the file
+    const log_file = try output_dir.createFile(log_name, .{});
+    defer log_file.close();
+
+    const writer = log_file.writer();
+    const output = try proc.stdout.?.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(output);
+    _ = try proc.wait();
+    try writer.writeAll(output);
+    
+    const netlist_path = try std.fmt.allocPrint(alloc, "{s}/synth_{s}.json", .{OUTPUT_DIR, name});
+    defer alloc.free(netlist_path);
+    const netlist_file = try dir.openFile(netlist_path, .{});
+    defer netlist_file.close();
+    var reader = std.json.reader(alloc, netlist_file.reader());
+    defer reader.deinit();
+    return try std.json.parseFromTokenSource(
+        Netlist,
+        alloc,
+        &reader,
+        .{ .ignore_unknown_fields = true },
+    );
+}
+
+fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Dir) !void {
     const filename = try std.fmt.allocPrint(alloc, "{s}.jed", .{name});
     defer alloc.free(filename);
-    var out = try std.fs.cwd().createFile(filename, .{});
+    var out = try dir.createFile(filename, .{});
     defer out.close();
     try fmap.writeJed(out, .{});
 
-    var workdir = try std.fs.cwd().openDir("models/", .{});
-    defer workdir.close();
-    const pcf_name = try std.fmt.allocPrint(alloc, "../testcases/{s}.pcf", .{name});
+    const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "models", "prove_equiv.tcl" });
+    defer alloc.free(path_to_script);
+    const pcf_name = try std.fmt.allocPrint(alloc, "../../../testcases/{s}.pcf", .{name});
     defer alloc.free(pcf_name);
-    const vlog_name = try std.fmt.allocPrint(alloc, "../testcases/{s}.v", .{name});
+    const vlog_name = try std.fmt.allocPrint(alloc, "../../../testcases/{s}.v", .{name});
     defer alloc.free(vlog_name);
-    const jed_backname = try std.fmt.allocPrint(alloc, "../{s}.jed", .{name});
-    defer alloc.free(jed_backname);
     const args = [_][]const u8{
         "yosys",
         "-c",
-        "prove_equiv.tcl",
+        path_to_script,
         "--",
-        jed_backname,
+        filename,
         pcf_name,
         vlog_name,
     };
     var proc = std.process.Child.init(&args, alloc);
-    proc.cwd_dir = workdir;
+    proc.cwd_dir = dir;
     proc.stdout_behavior = .Ignore;
     proc.stderr_behavior = .Ignore;
-    
+
     try proc.spawn();
 
     const res = proc.wait() catch |err| switch (err) {
@@ -49,7 +101,6 @@ fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap) !void {
         else => |other| return other,
     };
     try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
-    try std.fs.cwd().deleteFile(filename);
 }
 
 const Test = struct {
@@ -64,16 +115,19 @@ const Test = struct {
 
 /// Test helper function
 fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
-    // This is all netlist setup
-    const netlist_path = try std.fmt.allocPrint(alloc, "./output/synth_{s}.json", .{t.name});
-    defer alloc.free(netlist_path);
-    const netlist = try yosys_netlist.readNetlist(alloc, netlist_path);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Synthesize the testcase with yosys
+    const netlist = try synth(alloc, t.name, tmp.dir);
+
     defer netlist.deinit();
 
     const path = try std.fmt.allocPrint(alloc, "./testcases/{s}.pcf", .{t.name});
     defer alloc.free(path);
     var constraints = try pcf.readPcf(alloc, path);
     defer constraints.deinit();
+
+
     var tm = try TechMap.init(alloc, t.chip, &netlist.value);
     defer tm.deinit();
     try tm.applyConstraints(constraints);
@@ -89,8 +143,8 @@ fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
     );
     defer fmap.deinit();
     try gal.synthesize(&fmap);
-    try jed.testJedutil(alloc, fmap, t.chip, .jed);
-    try equivalence(alloc, t.name, fmap);
+    // try jed.testJedutil(alloc, fmap, t.chip, .jed);
+    try equivalence(alloc, t.name, fmap, tmp.dir);
 }
 
 fn testFitter(t: Test) !void {

@@ -68,7 +68,7 @@ clean -purge
 
 ## Tech mapping
 # PLAs
-techmap -map techmaps/pla.v -D PLA_MAX_PRODUCTS=$num_max_products
+techmap -map ${scriptDir}/techmaps/pla.v -D PLA_MAX_PRODUCTS=$num_max_products
 techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_sop.v
 
 # Sequential OLMC 
@@ -106,8 +106,8 @@ techmap -max_iter 1 -map ${scriptDir}/techmaps/trivial_1sop_olmc.v */t:GAL_OLMC 
 clean -purge
 
 ## Write output files
-write_verilog "output/synth_${fbasename}.v"
-write_json "output/synth_${fbasename}.json"
+write_verilog "./output/synth_${fbasename}.v"
+write_json "./output/synth_${fbasename}.json"
 
 ## Verify equivalence
 # Backup and make gold and gate modules
