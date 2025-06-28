@@ -21,39 +21,30 @@ const OUTPUT_DIR = "output/";
 /// The tmpdir must be passed to the synth script. We assume it's in
 /// .zig-cache/tmp/<random> and will traverse back to the cwd manually.
 fn synth(alloc: Allocator, name: []const u8, dir: std.fs.Dir) !std.json.Parsed(Netlist) {
-    var log_name_buf: [100]u8 = undefined;
-    var output_dir = try dir.makeOpenPath(OUTPUT_DIR, .{});
-    defer output_dir.close();
-    const log_name = try std.fmt.bufPrint(&log_name_buf, "synth_{s}_log.txt", .{name});
+    try dir.makePath(OUTPUT_DIR);
 
+    // build the script path
     const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "synth_gal.tcl" });
     defer alloc.free(path_to_script);
     try dir.access(path_to_script, .{});
+    // build the source path
     const src_name = try std.fmt.allocPrint(alloc, "{s}.v", .{name});
     defer alloc.free(src_name);
     const path_to_src = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "testcases", src_name });
     defer alloc.free(path_to_src);
-
     try dir.access(path_to_src, .{});
 
     const args = [_][]const u8{ "yosys", "-c", path_to_script, "--", path_to_src };
     var proc = std.process.Child.init(&args, alloc);
-    // set our tmp dir
+    // run inside the tmp dir, using the relative paths.
     proc.cwd_dir = dir;
-    // send it.
-    proc.stdout_behavior = .Pipe;
+    proc.stdout_behavior = .Ignore;
+    proc.stderr_behavior = .Ignore;
     try proc.spawn();
-    // open the file
-    const log_file = try output_dir.createFile(log_name, .{});
-    defer log_file.close();
 
-    const writer = log_file.writer();
-    const output = try proc.stdout.?.readToEndAlloc(alloc, 1024 * 1024);
-    defer alloc.free(output);
     _ = try proc.wait();
-    try writer.writeAll(output);
-    
-    const netlist_path = try std.fmt.allocPrint(alloc, "{s}/synth_{s}.json", .{OUTPUT_DIR, name});
+
+    const netlist_path = try std.fmt.allocPrint(alloc, "{s}/synth_{s}.json", .{ OUTPUT_DIR, name });
     defer alloc.free(netlist_path);
     const netlist_file = try dir.openFile(netlist_path, .{});
     defer netlist_file.close();
@@ -70,9 +61,12 @@ fn synth(alloc: Allocator, name: []const u8, dir: std.fs.Dir) !std.json.Parsed(N
 fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Dir) !void {
     const filename = try std.fmt.allocPrint(alloc, "{s}.jed", .{name});
     defer alloc.free(filename);
-    var out = try dir.createFile(filename, .{});
-    defer out.close();
-    try fmap.writeJed(out, .{});
+    // create our jed file.
+    {
+        var jed_output = try dir.createFile(filename, .{});
+        defer jed_output.close();
+        try fmap.writeJed(jed_output, .{});
+    }
 
     const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "models", "prove_equiv.tcl" });
     defer alloc.free(path_to_script);
@@ -126,7 +120,6 @@ fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
     defer alloc.free(path);
     var constraints = try pcf.readPcf(alloc, path);
     defer constraints.deinit();
-
 
     var tm = try TechMap.init(alloc, t.chip, &netlist.value);
     defer tm.deinit();
