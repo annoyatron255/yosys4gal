@@ -5,7 +5,7 @@
 pub const yosys_netlist = @import("./yosys_netlist.zig");
 pub const pcf = @import("./pcf.zig");
 pub const jed = @import("./jed.zig");
-pub const xv8 = @import("./gal_xV8.zig");
+pub const gal = @import("./gal_core.zig");
 pub const bimap = @import("./util/bimap.zig");
 pub const techmap = @import("./gal_techmap.zig");
 pub const array2d = @import("./util/array2d.zig");

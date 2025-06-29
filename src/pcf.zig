@@ -86,19 +86,18 @@ test parseArg {
 
 /// PCF file statement. consists of a command and then arguments.
 const PcfCmd = union(enum) {
-    const Self = @This();
     set_io: struct { name: []const u8, net: u32 },
     set_clk: []const u8,
     // set_voltage: struct { []const u8, u32 },
 
     /// parse a given line of a PCF file.
     /// we assume the line is not a comment or empty
-    pub fn parseLine(line: []const u8) !Self {
+    pub fn parseLine(line: []const u8) !PcfCmd {
         var tokens = std.mem.tokenizeScalar(u8, line, ' ');
 
         const cmd_name = tokens.next() orelse return error.EmptyLine;
 
-        const cmds = @typeInfo(Self).@"union";
+        const cmds = @typeInfo(PcfCmd).@"union";
 
         inline for (cmds.fields) |field| {
             if (std.mem.eql(u8, cmd_name, field.name)) {
@@ -109,7 +108,7 @@ const PcfCmd = union(enum) {
                         return PcfError.InvalidStatement;
                     }
                 }
-                return @unionInit(Self, field.name, val);
+                return @unionInit(PcfCmd, field.name, val);
             }
         }
         return PcfError.UnknownCommand;

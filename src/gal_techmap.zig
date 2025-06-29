@@ -8,7 +8,7 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const testing = std.testing;
 const assert = std.debug.assert;
 const chip = @import("./chipinfo.zig");
-const xv8 = @import("./gal_xV8.zig");
+const gal = @import("./gal_core.zig");
 const pcf = @import("./pcf.zig");
 const yosys_netlist = @import("./yosys_netlist.zig");
 
@@ -44,12 +44,11 @@ const TechmapError = error{
 };
 
 const GALCell = enum {
-    const Self = @This();
     Olmc,
     Sop,
     Input,
     pub const strings = blk: {
-        const fields = std.meta.fields(Self);
+        const fields = std.meta.fields(GALCell);
         var arr: [fields.len][]const u8 = undefined;
 
         // Build each entry
@@ -61,10 +60,10 @@ const GALCell = enum {
         }
         break :blk arr;
     };
-    pub fn toString(self: Self) []const u8 {
+    pub fn toString(self: GALCell) []const u8 {
         return strings[@intFromEnum(self)];
     }
-    pub fn fromString(s: []const u8) ?Self {
+    pub fn fromString(s: []const u8) ?GALCell {
         inline for (strings, 0..) |name, idx| {
             if (std.mem.eql(u8, s, name)) {
                 return @enumFromInt(idx);
@@ -187,7 +186,7 @@ fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
 pub const SopCell = struct {
     ref: *const yosys_netlist.Cell,
     /// Convert this SOP and place it on the given array2d.
-    pub fn toArray(self: SopCell, tm: *TechMap, out: *xv8.SopTerm) !void {
+    pub fn toArray(self: SopCell, tm: *TechMap, out: *gal.SopTerm) !void {
         // extract the params.
         // depth aka number of products
         const depth = self.ref.getProp(u32, .param, "DEPTH").?;
@@ -248,7 +247,6 @@ pub const SopCell = struct {
 
 /// GAL chip mapping state
 pub const TechMap = struct {
-    const Self = @This();
     allocator: Allocator,
     npm: yosys_netlist.NetPortMap,
     ncm: yosys_netlist.NetCellMap,
@@ -263,7 +261,7 @@ pub const TechMap = struct {
         allocator: Allocator,
         chip_type: chip.ChipType,
         netlist: *const Netlist,
-    ) !Self {
+    ) !TechMap {
         const top = netlist.findTopModule();
         var ncm = try yosys_netlist.buildNetCellMap(allocator, top);
         errdefer ncm.deinit();
@@ -271,7 +269,7 @@ pub const TechMap = struct {
         errdefer npm.deinit();
 
         const pm = try PinMap.init(allocator, chip_type);
-        var self = Self{
+        var self = TechMap{
             .chip_type = chip_type,
             .netlist = netlist,
             .npm = npm,
@@ -287,7 +285,7 @@ pub const TechMap = struct {
         return self;
     }
     /// internal function to split up the scope.
-    fn populateArrays(self: *Self) !void {
+    fn populateArrays(self: *TechMap) !void {
         const top = self.netlist.findTopModule();
         var cells = top.cells.map.iterator();
 
@@ -317,7 +315,7 @@ pub const TechMap = struct {
     }
 
     /// Bind the OLMCs to pins using a pinmap
-    pub fn applyConstraints(self: *Self, constraints: pcf.PinConstraints) !void {
+    pub fn applyConstraints(self: *TechMap, constraints: pcf.PinConstraints) !void {
         const top = self.netlist.findTopModule();
         try bindPorts(self.allocator, self.chip_type, &self.pinmap, top.ports, constraints);
         // look for any remaining OLMCs that are not on a port.
@@ -330,8 +328,8 @@ pub const TechMap = struct {
             }
         }
     }
-    pub fn mapChip(self: *Self) !xv8.GAL {
-        var gal = try xv8.GAL.init(self.allocator, self.chip_type);
+    pub fn mapChip(self: *TechMap) !gal.GAL {
+        var gal_instance = try gal.GAL.init(self.allocator, self.chip_type);
         for (self.olmcs.items) |olmc| {
             log.debug("OLMC = {any}", .{olmc});
             const pin = olmc.getOutputPin(self);
@@ -340,23 +338,23 @@ pub const TechMap = struct {
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
             log.debug("index is {d}", .{olmc_idx});
             // using this, get the sop from the GAL representation
-            const sop_array = try gal.getOrMakeSop(olmc_idx, !olmc.registered());
+            const sop_array = try gal_instance.getOrMakeSop(olmc_idx, !olmc.registered());
             const sop_cell = olmc.getSopCell(.A, self).?;
             try sop_cell.toArray(self, sop_array);
             // use this olmc to map to the chip olmc
-            gal.olmcs[olmc_idx].comb = !olmc.registered();
-            gal.olmcs[olmc_idx].active_high = !olmc.inverted();
+            gal_instance.olmcs[olmc_idx].comb = !olmc.registered();
+            gal_instance.olmcs[olmc_idx].active_high = !olmc.inverted();
             // finally check for tristate
             if (olmc.getSopCell(.E, self)) |oe_sop| {
-                const oe_array = try gal.getOETerm(olmc_idx);
+                const oe_array = try gal_instance.getOETerm(olmc_idx);
 
                 try oe_sop.toArray(self, oe_array);
             }
         }
-        return gal;
+        return gal_instance;
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *TechMap) void {
         self.npm.deinit();
         self.ncm.deinit();
         self.olmcs.deinit(self.allocator);
