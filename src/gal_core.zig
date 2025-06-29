@@ -74,14 +74,15 @@ pub const GAL = struct {
             // .gal22v10 => {
             //     // do nothing
             // },
-            .gal16v8 => {},
+            .gal16v8 => {
+                const pt: []bool = try result.arena.allocator().alloc(bool, 64);
+                @memset(pt, true);
+                result.pt = pt;
+                result.ac0 = true;
+                result.syn = false;
+            },
         }
-        result.ac0 = true;
-        result.syn = false;
         // allocate ptd even though we don't use it.
-        const pt: []bool = try arena.allocator().alloc(bool, 64);
-        @memset(pt, true);
-        result.pt = pt;
         return result;
     }
 
@@ -194,11 +195,9 @@ pub const GAL = struct {
             try fmap.set(base, olmc.comb);
             base += 1;
         }
-        if (self.pt != null) {
-            //FIXME: ptd is corrupting??
-            const data = &[_]bool{true} ** 64;
-            try fmap.setSlice(base, data);
-            base += data.len;
+        if (self.pt) |ptd| {
+            try fmap.setSlice(base, ptd);
+            base += ptd.len;
         } else {
             // we don't support this case yet, 22v10
             unreachable;
