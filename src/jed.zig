@@ -79,6 +79,15 @@ fn file_checksum(data: []const u8) u16 {
     return sum;
 }
 
+const jedFileChecksum = struct {
+    sum: u16 = 0,
+    pub fn update(self: *jedFileChecksum, data: []const u8) void {
+        for (data) |byte| {
+            self.sum = @addWithOverflow(self.sum, byte).@"0";
+        }
+    }
+};
+
 const jedHeader = std.fmt.comptimePrint(
     \\GAL Assembler: mkjed {s}
     \\Zig version: {s}
@@ -163,12 +172,13 @@ pub const FuseMap = struct {
     }
 
     /// Write the fusemap in the jed format to the given output.
-    pub fn writeJed(self: FuseMap, output: anytype, options: jedOptions) !void {
-        // pre alloc 8k, probably will be larger.
-        var buf = try std.ArrayList(u8).initCapacity(self.allocator, 8192);
-        defer buf.deinit();
-        // write to this buffer
-        var writer = buf.writer();
+    pub fn writeJed(self: FuseMap, output: *std.io.Writer, options: jedOptions) !void {
+        // internal write out buffer
+        var buf: [1024]u8 = undefined;
+        // we want a checksum of the written contents.
+        var hasher = std.io.Writer.Hashed(jedFileChecksum).init(output, &buf);
+        var writer = &hasher.writer;
+
         // start of file
         try writer.writeAll(&.{ 0x02, '\n' });
         try writer.writeAll(jedHeader);
@@ -219,25 +229,36 @@ pub const FuseMap = struct {
         const chk = self.computeChecksum();
         try writer.print("C{x:04}*\n", .{chk});
         try writer.writeAll(&.{0x03});
+        try writer.flush(); // this flush makes it so that the checksum is updated.
 
-        const file_chk = file_checksum(buf.items);
-        try writer.print("{x:04}", .{file_chk});
-        // now, dump our finalized buffer to the output.
-        try output.writeAll(buf.items);
+        // append the checksum - note that the checksum changes after this write!
+        try writer.print("{x:04}", .{hasher.hasher.sum});
+        try writer.flush();
     }
 
     /// Writes the binary output using jedutil's binary format.
     /// The format contains a u32 for the fuse count, and then
     /// bit-packed fuse bits. This is largely untested.
-    pub fn writeBin(self: FuseMap, output: anytype) !void {
+    pub fn writeBin(self: FuseMap, output: *std.io.Writer) !void {
         // first, write the length as a 4-byte value.
         try output.writeInt(u32, @intCast(self.fuses.len), .big);
-
-        var bits = std.io.bitWriter(.big, output);
+        var count: u3 = 0;
+        var byte: u8 = 0;
         for (self.fuses) |fuse| {
-            try bits.writeBits(fuse, 1);
+            byte &= @as(u8, @intFromBool(fuse)) << count;
+            if (count == 7) {
+                try output.writeByte(byte);
+                byte = 0;
+                count = 0;
+            } else {
+                count = count + 1;
+            }
         }
-        try bits.flushBits();
+        // flush the last partial
+        if (count != 0) {
+            try output.writeByte(byte);
+        }
+        try output.flush();
     }
 };
 
@@ -273,14 +294,17 @@ test "writeJed" {
     defer fmap.deinit();
     try fmap.set(0, true);
 
-    var output = std.ArrayList(u8).init(alloc);
+    var output = std.io.Writer.Allocating.init(alloc);
     defer output.deinit();
 
-    try fmap.writeJed(output.writer(), .{});
+    try fmap.writeJed(&output.writer, .{});
+
+    var buf = output.toArrayList();
+    defer buf.deinit(alloc);
 
     // skip the checksum, since it depends on the zig version.
     // use slices, since we have the 0x02 and 0x03.
-    try std.testing.expectEqualSlices(u8, expected_file, output.items[0 .. output.items.len - 4]);
+    try std.testing.expectEqualSlices(u8, expected_file, buf.items[0 .. buf.items.len - 4]);
 }
 
 // test to see if the jed is valid. using jedutil.
@@ -314,14 +338,18 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipT
     defer alloc.free(file);
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
+    // create the jed file.
     {
         var out = try tmp.dir.createFile(file, .{});
+        var buf: [1024]u8 = undefined;
+        var writer = out.writer(&buf);
         defer out.close();
 
         switch (mode) {
-            .jed => try fmap.writeJed(out.writer(), .{}),
-            .bin => try fmap.writeBin(out.writer()),
+            .jed => try fmap.writeJed(&writer.interface, .{}),
+            .bin => try fmap.writeBin(&writer.interface),
         }
+        try writer.interface.flush();
     }
 
     // invoke jedutil -view output.jed gal16v8
@@ -340,7 +368,10 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipT
         error.FileNotFound => return error.SkipZigTest,
         else => |other| return other,
     };
-    try testing.expectEqual(0, output.len);
+    testing.expectEqual(0, output.len) catch |err| {
+        std.debug.print("unexpected jedutil output: {s}", .{output});
+        return err;
+    };
 
     try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
 }

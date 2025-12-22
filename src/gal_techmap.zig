@@ -382,6 +382,7 @@ const DeferredPort = struct {
 };
 
 fn bindSinglePort(
+    allocator: Allocator,
     port_name: []const u8,
     dir: yosys_netlist.PortDirection,
     net: yosys_netlist.Net,
@@ -400,7 +401,7 @@ fn bindSinglePort(
             });
         }
     } else {
-        try deferred_ports.append(.{ .dir = dir, .net = net });
+        try deferred_ports.append(allocator, .{ .dir = dir, .net = net });
     }
 }
 
@@ -416,8 +417,8 @@ fn bindPorts(
 ) !void {
     //TODO: make this public/common? I feel like this logic is pretty universal.
     // ports that we need to assign later, after we're done with the PCF.
-    var deferred_ports = std.ArrayList(DeferredPort).init(allocator);
-    defer deferred_ports.deinit();
+    var deferred_ports = std.ArrayList(DeferredPort).empty;
+    defer deferred_ports.deinit(allocator);
     // first pass - bind PCF constrained pins.
     var port_iter = ports.map.iterator();
     while (port_iter.next()) |entry| {
@@ -433,6 +434,7 @@ fn bindPorts(
         if (port.bits.len == 1) {
             // single bit port, handle it directly.
             try bindSinglePort(
+                allocator,
                 port_name.*,
                 dir,
                 port.bits[0],
@@ -446,8 +448,9 @@ fn bindPorts(
             for (port.bits, 0..) |net, idx| {
                 // construct the port[index].
                 var buf: [100]u8 = undefined;
-                const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name, idx });
+                const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name.*, idx });
                 try bindSinglePort(
+                    allocator,
                     fullname,
                     dir,
                     net,

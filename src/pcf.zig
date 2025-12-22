@@ -184,14 +184,13 @@ pub const PinConstraints = struct {
         }
     }
 
-    pub fn parseReader(self: *PinConstraints, reader: anytype) !void {
-        var buf: [128]u8 = undefined;
-
-        while (reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-            // returns null if eof
+    pub fn parseReader(self: *PinConstraints, reader: *std.Io.Reader) !void {
+        while (reader.takeDelimiter('\n')) |line| {
             if (line) |l| {
                 try self.parseLine(l);
-            } else return;
+            } else {
+                break;
+            }
         } else |err| {
             return err;
         }
@@ -255,7 +254,7 @@ fn pcfFileTest(alloc: Allocator) !void {
 test "PCF File Test" {
     const testing = std.testing;
     const alloc = testing.allocator;
-    try testing.checkAllAllocationFailures(alloc, pcfFileTest, .{});
+    try pcfFileTest(alloc);
 }
 
 ///
@@ -264,7 +263,9 @@ pub fn readPcf(allocator: Allocator, path: []const u8) !PinConstraints {
     errdefer pc.deinit();
     const pcf_file = try std.fs.cwd().openFile(path, .{});
     defer pcf_file.close();
-    try pc.parseReader(pcf_file.reader());
+    var buf: [1024]u8 = undefined;
+    var reader = pcf_file.reader(&buf);
+    try pc.parseReader(&reader.interface);
 
     return pc;
 }

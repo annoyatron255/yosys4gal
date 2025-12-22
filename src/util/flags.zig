@@ -43,7 +43,9 @@ const assert = std.debug.assert;
 
 /// Format and print an error message to stderr, then exit with an exit code of 1.
 fn fatal(comptime fmt_string: []const u8, args: anytype) noreturn {
-    const stderr = std.io.getStdErr().writer();
+    var buf: [128]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+    const stderr = &stderr_writer.interface;
     stderr.print("error: " ++ fmt_string ++ "\n", args) catch {};
     // NB: this status must match vsr.FatalReason.cli, but it would be wrong for flags to depend on
     // vsr. The right way would be to parametrize flags by this behavior, and let the caller inject
@@ -75,6 +77,8 @@ fn fatal(comptime fmt_string: []const u8, args: anytype) noreturn {
 /// `positional` field is treated specially, it designates positional arguments.
 ///
 /// If `pub const help` declaration is present, it is used to implement `-h/--help` argument.
+///
+/// Value parsing can be customized on per-type basis via `parse_flag_value` customization point.
 pub fn parse(args: *std.process.ArgIterator, comptime CLIArgs: type) CLIArgs {
     comptime assert(CLIArgs != void);
     assert(args.skip()); // Discard executable name.
@@ -93,7 +97,9 @@ fn parse_commands(args: *std.process.ArgIterator, comptime Commands: type) Comma
     // NB: help must be declared as *pub* const to be visible here.
     if (@hasDecl(Commands, "help")) {
         if (std.mem.eql(u8, first_arg, "-h") or std.mem.eql(u8, first_arg, "--help")) {
-            std.io.getStdOut().writeAll(Commands.help) catch std.process.exit(1);
+            var stdout_buffer: [1024]u8 = undefined;
+            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+            stdout_writer.interface.writeAll(Commands.help) catch std.process.exit(1);
             std.process.exit(0);
         }
     }
@@ -123,48 +129,51 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
 
     assert(@typeInfo(Flags) == .@"struct");
 
-    comptime var fields: [std.meta.fields(Flags).len]std.builtin.Type.StructField = undefined;
-    comptime var field_count = 0;
+    const fields = std.meta.fields(Flags);
+    comptime var fields_named, const fields_positional = for (fields, 0..) |field, index| {
+        if (std.mem.eql(u8, field.name, "--")) {
+            assert(field.type == void);
+            assert(index != fields.len - 1);
+            break .{
+                fields[0..index].*,
+                fields[index + 1 ..].*,
+            };
+        }
+    } else .{
+        fields[0..fields.len].*,
+        [_]std.builtin.Type.StructField{},
+    };
 
-    comptime var positional_fields: []const std.builtin.Type.StructField = &.{};
+    comptime {
+        if (fields_positional.len == 0) {
+            assert(fields.len == fields_named.len);
+        } else {
+            assert(fields.len == fields_named.len + 1 + fields_positional.len);
+        }
 
-    comptime for (std.meta.fields(Flags)) |field| {
-        if (std.mem.eql(u8, field.name, "positional")) {
-            assert(@typeInfo(field.type) == .@"struct");
-            positional_fields = std.meta.fields(field.type);
-            var optional_tail = false;
-            for (positional_fields) |positional_field| {
-                if (default_value(positional_field) == null) {
-                    if (optional_tail) @panic("optional positional arguments must be last");
-                } else {
-                    optional_tail = true;
-                }
-                switch (@typeInfo(positional_field.type)) {
-                    .optional => |optional| {
-                        // optional flags should have a default
-                        assert(default_value(positional_field) != null);
-                        assert(default_value(positional_field).? == null);
-                        assert_valid_value_type(optional.child);
-                    },
-                    else => {
-                        assert_valid_value_type(positional_field.type);
-                    },
+        // When parsing named arguments, we must consider longer arguments first, such that
+        // `--foo-bar=92` is not confused for a misspelled `--foo=92`. Using `std.sort` for
+        // comptime-only values does not work, so open-code insertion sort, and comptime assert
+        // order during the actual parsing.
+        for (fields_named[0..], 0..) |*field_right, i| {
+            for (fields_named[0..i]) |*field_left| {
+                if (field_left.name.len < field_right.name.len) {
+                    std.mem.swap(std.builtin.Type.StructField, field_left, field_right);
                 }
             }
-        } else {
-            fields[field_count] = field;
-            field_count += 1;
+        }
 
+        for (fields_named) |field| {
             switch (@typeInfo(field.type)) {
                 .bool => {
-                    // boolean flags should have a default
-                    assert(default_value(field) != null);
-                    assert(default_value(field).? == false);
+                    // Boolean flags must have a default.
+                    assert(field.defaultValue() != null);
+                    assert(field.defaultValue().? == false);
                 },
                 .optional => |optional| {
-                    // optional flags should have a default
-                    assert(default_value(field) != null);
-                    assert(default_value(field).? == null);
+                    // Optional flags must have a default.
+                    assert(field.defaultValue() != null);
+                    assert(field.defaultValue().? == null);
 
                     assert_valid_value_type(optional.child);
                 },
@@ -173,42 +182,34 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
                 },
             }
         }
-    };
 
-    var result: Flags = undefined;
-    // Would use std.enums.EnumFieldStruct(Flags, u32, 0) here but Flags is a Struct not an Enum.
-    var counts = comptime blk: {
-        var count_fields = std.meta.fields(Flags)[0..std.meta.fields(Flags).len].*;
-        for (&count_fields) |*field| {
-            field.type = u32;
-            field.alignment = @alignOf(u32);
-            field.default_value_ptr = @ptrCast(&@as(u32, 0));
-        }
-        break :blk @Type(.{ .@"struct" = .{
-            .layout = .auto,
-            .fields = &count_fields,
-            .decls = &.{},
-            .is_tuple = false,
-        } }){};
-    };
-
-    // When parsing arguments, we must consider longer arguments first, such that `--foo-bar=92` is
-    // not confused for a misspelled `--foo=92`. Using `std.sort` for comptime-only values does not
-    // work, so open-code insertion sort, and comptime assert order during the actual parsing.
-    comptime {
-        for (fields[0..field_count], 0..) |*field_right, i| {
-            for (fields[0..i]) |*field_left| {
-                if (field_left.name.len < field_right.name.len) {
-                    std.mem.swap(std.builtin.Type.StructField, field_left, field_right);
-                }
+        var optional_tail: bool = false;
+        for (fields_positional) |field| {
+            if (field.defaultValue() == null) {
+                if (optional_tail) @panic("optional positional arguments must be trailing");
+            } else {
+                optional_tail = true;
+            }
+            switch (@typeInfo(field.type)) {
+                .optional => |optional| {
+                    // optional flags should have a default
+                    assert(field.defaultValue() != null);
+                    assert(field.defaultValue().? == null);
+                    assert_valid_value_type(optional.child);
+                },
+                else => {
+                    assert_valid_value_type(field.type);
+                },
             }
         }
     }
 
+    var counts: std.enums.EnumFieldStruct(std.meta.FieldEnum(Flags), u32, 0) = .{};
+    var result: Flags = undefined;
     var parsed_positional = false;
     next_arg: while (args.next()) |arg| {
         comptime var field_len_prev = std.math.maxInt(usize);
-        inline for (fields[0..field_count]) |field| {
+        inline for (fields_named) |field| {
             const flag = comptime flag_name(field);
 
             comptime assert(field_len_prev >= field.name.len);
@@ -225,12 +226,12 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
             }
         }
 
-        if (@hasField(Flags, "positional")) {
-            counts.positional += 1;
-            switch (counts.positional - 1) {
-                inline 0...positional_fields.len - 1 => |positional_index| {
-                    const positional_field = positional_fields[positional_index];
-                    const flag = comptime flag_name_positional(positional_field);
+        if (fields_positional.len > 0) {
+            counts.@"--" += 1;
+            switch (counts.@"--" - 1) {
+                inline 0...fields_positional.len - 1 => |field_index| {
+                    const field = fields_positional[field_index];
+                    const flag = comptime flag_name_positional(field);
 
                     if (arg.len == 0) fatal("{s}: empty argument", .{flag});
                     // Prevent ambiguity between a flag and positional argument value. We could add
@@ -239,8 +240,8 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
                     if (arg[0] == '-') fatal("unexpected argument: '{s}'", .{arg});
                     parsed_positional = true;
 
-                    @field(result.positional, positional_field.name) =
-                        parse_value(positional_field.type, flag, arg);
+                    @field(result, field.name) =
+                        parse_value(field.type, flag, arg);
                     continue :next_arg;
                 },
                 else => {}, // Fall-through to the unexpected argument error.
@@ -250,10 +251,10 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
         fatal("unexpected argument: '{s}'", .{arg});
     }
 
-    inline for (fields[0..field_count]) |field| {
+    inline for (fields_named) |field| {
         const flag = flag_name(field);
         switch (@field(counts, field.name)) {
-            0 => if (default_value(field)) |default| {
+            0 => if (field.defaultValue()) |default| {
                 @field(result, field.name) = default;
             } else {
                 fatal("{s}: argument is required", .{flag});
@@ -263,13 +264,13 @@ fn parse_flags(args: *std.process.ArgIterator, comptime Flags: type) Flags {
         }
     }
 
-    if (@hasField(Flags, "positional")) {
-        assert(counts.positional <= positional_fields.len);
-        inline for (positional_fields, 0..) |positional_field, positional_index| {
-            if (positional_index >= counts.positional) {
-                const flag = comptime flag_name_positional(positional_field);
-                if (default_value(positional_field)) |default| {
-                    @field(result.positional, positional_field.name) = default;
+    if (fields_positional.len > 0) {
+        assert(counts.@"--" <= fields_positional.len);
+        inline for (fields_positional, 0..) |field, field_index| {
+            if (field_index >= counts.@"--") {
+                const flag = comptime flag_name_positional(field);
+                if (field.defaultValue()) |default| {
+                    @field(result, field.name) = default;
                 } else {
                     fatal("{s}: argument is required", .{flag});
                 }
@@ -292,8 +293,7 @@ fn assert_valid_value_type(comptime T: type) void {
             return;
         }
 
-        @compileLog("unsupported type", T);
-        unreachable;
+        @compileError("flags: unsupported type: " ++ @typeName(T));
     }
 }
 
@@ -346,134 +346,32 @@ fn parse_value(comptime T: type, flag: []const u8, value: [:0]const u8) T {
     if (@typeInfo(V) == .int) return parse_value_int(V, flag, value);
     if (@typeInfo(V) == .@"enum") return parse_value_enum(V, flag, value);
     if (@hasDecl(V, "parse_flag_value")) {
-        switch (V.parse_flag_value(value)) {
-            .ok => |v| return v,
-            .err => |message| {
+
+        // Contracts:
+        // - Input string is guaranteed to be not empty.
+        // - Output diagnostic must point to statically-allocated data.
+        // - Diagnostic must start with a lower case letter.
+        // - Diagnostic must end with a ':' (it will be concatenated with original input).
+        // - (static_diagnostic != null) iff error.InvalidFlagValue is returned.
+        const parse_flag_value: fn (
+            string: []const u8,
+            static_diagnostic: *?[]const u8,
+        ) error{InvalidFlagValue}!V = V.parse_flag_value;
+
+        var diagnostic: ?[]const u8 = null;
+        if (parse_flag_value(value, &diagnostic)) |result| {
+            assert(diagnostic == null);
+            return result;
+        } else |err| switch (err) {
+            error.InvalidFlagValue => {
+                const message = diagnostic.?;
+                assert(std.ascii.isLower(message[0]));
                 assert(message[message.len - 1] == ':');
                 fatal("{s}: {s} '{s}'", .{ flag, message, value });
             },
         }
     }
     comptime unreachable;
-}
-
-pub const ByteUnit = enum(u64) {
-    bytes = 1,
-    kib = 1024,
-    mib = 1024 * 1024,
-    gib = 1024 * 1024 * 1024,
-    tib = 1024 * 1024 * 1024 * 1024,
-};
-
-pub const ByteSize = struct {
-    value: u64,
-    unit: ByteUnit = .bytes,
-
-    pub fn parse_flag_value(value: []const u8) union(enum) { ok: ByteSize, err: []const u8 } {
-        assert(value.len != 0);
-
-        const split: struct {
-            value_input: []const u8,
-            unit_input: []const u8,
-        } = split: for (0..value.len) |i| {
-            if (!std.ascii.isDigit(value[i]) and value[i] != '_') {
-                break :split .{
-                    .value_input = value[0..i],
-                    .unit_input = value[i..],
-                };
-            }
-        } else {
-            break :split .{
-                .value_input = value,
-                .unit_input = "",
-            };
-        };
-
-        const amount = std.fmt.parseUnsigned(u64, split.value_input, 10) catch |err| {
-            switch (err) {
-                error.Overflow => {
-                    return .{ .err = "value exceeds 64-bit unsigned integer:" };
-                },
-                error.InvalidCharacter => {
-                    // The only case this can happen is for the empty string
-                    return .{ .err = "expected a size, but found:" };
-                },
-            }
-        };
-
-        const unit = if (split.unit_input.len > 0)
-            unit: inline for (comptime std.enums.values(ByteUnit)) |tag| {
-                if (std.ascii.eqlIgnoreCase(split.unit_input, @tagName(tag))) {
-                    break :unit tag;
-                }
-            } else {
-                return .{ .err = "invalid unit in size, needed KiB, MiB, GiB or TiB:" };
-            }
-        else
-            ByteUnit.bytes;
-
-        _ = std.math.mul(u64, amount, @intFromEnum(unit)) catch {
-            return .{ .err = "size in bytes exceeds 64-bit unsigned integer:" };
-        };
-
-        return .{ .ok = .{ .value = amount, .unit = unit } };
-    }
-
-    pub fn bytes(size: *const ByteSize) u64 {
-        return std.math.mul(
-            u64,
-            size.value,
-            @intFromEnum(size.unit),
-        ) catch unreachable;
-    }
-
-    pub fn suffix(size: *const ByteSize) []const u8 {
-        return switch (size.unit) {
-            .bytes => "",
-            .kib => "KiB",
-            .mib => "MiB",
-            .gib => "GiB",
-            .tib => "TiB",
-        };
-    }
-};
-
-test "ByteSize.parse_flag_value" {
-    const kib = 1024;
-    const mib = kib * 1024;
-    const gib = mib * 1024;
-    const tib = gib * 1024;
-
-    const cases = .{
-        .{ 0, "0", 0, ByteUnit.bytes },
-        .{ 1, "1", 1, ByteUnit.bytes },
-        .{ 140737488355328, "140737488355328", 140737488355328, ByteUnit.bytes },
-        .{ 140737488355328, "128TiB", 128, ByteUnit.tib },
-        .{ 1 * tib, "1TiB", 1, ByteUnit.tib },
-        .{ 10 * tib, "10tib", 10, ByteUnit.tib },
-        .{ 1 * gib, "1GiB", 1, ByteUnit.gib },
-        .{ 10 * gib, "10gib", 10, ByteUnit.gib },
-        .{ 1 * mib, "1MiB", 1, ByteUnit.mib },
-        .{ 10 * mib, "10mib", 10, ByteUnit.mib },
-        .{ 1 * kib, "1KiB", 1, ByteUnit.kib },
-        .{ 10 * kib, "10kib", 10, ByteUnit.kib },
-        .{ 10 * kib, "1_0kib", 10, ByteUnit.kib },
-    };
-
-    inline for (cases) |case| {
-        const bytes = case[0];
-        const input = case[1];
-        const unit_val = case[2];
-        const unit = case[3];
-        const result = ByteSize.parse_flag_value(input);
-        if (result == .err) {
-            std.debug.panic("expected ok, got: '{s}'", .{result.err});
-        }
-        const got = result.ok;
-        assert(bytes == got.bytes());
-        assert(unit_val == got.value);
-        assert(unit == got.unit);
-    }
 }
 
 /// Parse string value into an integer, providing a nice error message for the user.
@@ -536,9 +434,7 @@ fn fields_to_comma_list(comptime E: type) []const u8 {
     }
 }
 
-pub fn flag_name(comptime field: std.builtin.Type.StructField) []const u8 {
-    // TODO(Zig): Cleanup when this is fixed after Zig 0.11.
-    // Without comptime blk, the compiler thinks the result is a runtime slice returning a UAF.
+fn flag_name(comptime field: std.builtin.Type.StructField) []const u8 {
     return comptime blk: {
         assert(!std.mem.eql(u8, field.name, "positional"));
 
@@ -563,109 +459,36 @@ fn flag_name_positional(comptime field: std.builtin.Type.StructField) []const u8
     return "<" ++ field.name ++ ">";
 }
 
-/// This is essentially `field.default_value`, but with a useful type instead of `?*anyopaque`.
-pub fn default_value(comptime field: std.builtin.Type.StructField) ?field.type {
-    return if (field.default_value_ptr) |default_opaque|
-        @as(*const field.type, @ptrCast(@alignCast(default_opaque))).*
-    else
-        null;
+fn parse_flag_value_check_diagnostic(string: []const u8, diagnostic: ?[]const u8) !void {
+    const message = diagnostic orelse {
+        std.debug.print("expected a diagnostic: string='{s}'", .{string});
+        return error.TestUnexpectedResult;
+    };
+    if (!(message.len > 0 and
+        std.ascii.isLower(message[0]) and
+        message[message.len - 1] == ':'))
+    {
+        std.debug.print("wrong diagnostic format: string='{s}' diagnostic='{s}'", .{
+            string,
+            message,
+        });
+        return error.TestUnexpectedResult;
+    }
 }
 
-// CLI parsing makes a liberal use of `fatal`, so testing it within the process is impossible. We
-// test it out of process by:
-//   - using Zig compiler to build this very file as an executable in a temporary directory,
-//   - running the following main with various args and capturing stdout, stderr, and the exit code.
-//   - asserting that the captured values are correct.
-pub usingnamespace if (@import("root") != @This()) struct {
-    // For production builds, don't include the main function.
-    // This is `if __name__ == "__main__":` at comptime!
-} else struct {
-    const CLIArgs = union(enum) {
-        empty,
-        prefix: struct {
-            foo: u8 = 0,
-            foo_bar: u8 = 0,
-            opt: bool = false,
-            option: bool = false,
-        },
-        pos: struct { flag: bool = false, positional: struct {
-            p1: []const u8,
-            p2: []const u8,
-            p3: ?u32 = null,
-            p4: ?u32 = null,
-        } },
-        required: struct {
-            foo: u8,
-            bar: u8,
-        },
-        values: struct {
-            int: u32 = 0,
-            size: ByteSize = .{ .value = 0 },
-            boolean: bool = false,
-            path: []const u8 = "not-set",
-            optional: ?[]const u8 = null,
-            choice: enum { marlowe, shakespeare } = .marlowe,
-        },
-        subcommand: union(enum) {
-            pub const help =
-                \\subcommand help
-                \\
-            ;
+fn unique(sorted: []u8) []u8 {
+    assert(sorted.len > 0);
 
-            c1: struct { a: bool = false },
-            c2: struct { b: bool = false },
-        },
-
-        pub const help =
-            \\ flags-test-program [flags]
-            \\
-        ;
-    };
-
-    pub fn main() !void {
-        var gpa_allocator = std.heap.GeneralPurposeAllocator(.{}){};
-        const gpa = gpa_allocator.allocator();
-
-        var args = try std.process.argsWithAllocator(gpa);
-        defer args.deinit();
-
-        const cli_args = parse(&args, CLIArgs);
-
-        const stdout = std.io.getStdOut();
-        const out_stream = stdout.writer();
-        switch (cli_args) {
-            .empty => try out_stream.print("empty\n", .{}),
-            .prefix => |values| {
-                try out_stream.print("foo: {}\n", .{values.foo});
-                try out_stream.print("foo-bar: {}\n", .{values.foo_bar});
-                try out_stream.print("opt: {}\n", .{values.opt});
-                try out_stream.print("option: {}\n", .{values.option});
-            },
-            .pos => |values| {
-                try out_stream.print("p1: {s}\n", .{values.positional.p1});
-                try out_stream.print("p2: {s}\n", .{values.positional.p2});
-                try out_stream.print("p3: {?}\n", .{values.positional.p3});
-                try out_stream.print("p4: {?}\n", .{values.positional.p4});
-                try out_stream.print("flag: {}\n", .{values.flag});
-            },
-            .required => |required| {
-                try out_stream.print("foo: {}\n", .{required.foo});
-                try out_stream.print("bar: {}\n", .{required.bar});
-            },
-            .values => |values| {
-                try out_stream.print("int: {}\n", .{values.int});
-                try out_stream.print("size: {}\n", .{values.size.bytes()});
-                try out_stream.print("boolean: {}\n", .{values.boolean});
-                try out_stream.print("path: {s}\n", .{values.path});
-                try out_stream.print("optional: {?s}\n", .{values.optional});
-                try out_stream.print("choice: {?s}\n", .{@tagName(values.choice)});
-            },
-            .subcommand => |values| {
-                switch (values) {
-                    .c1 => |c1| try out_stream.print("c1.a: {}\n", .{c1.a}),
-                    .c2 => |c2| try out_stream.print("c2.b: {}\n", .{c2.b}),
-                }
-            },
+    var count: usize = 1;
+    for (1..sorted.len) |index| {
+        assert(sorted[count - 1] <= sorted[index]);
+        if (sorted[count - 1] == sorted[index]) {
+            // Duplicate! Skip to the next index.
+        } else {
+            sorted[count] = sorted[index];
+            count += 1;
         }
     }
-};
+
+    return sorted[0..count];
+}

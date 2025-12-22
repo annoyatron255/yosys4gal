@@ -71,13 +71,17 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     };
     defer constraints.deinit();
 
-    const out_writer = blk: {
+    var writer_buf: [1024]u8 = undefined;
+    var out_file: std.fs.File = blk: {
         if (output) |out_path| {
             break :blk try std.fs.cwd().createFile(out_path, .{});
         } else {
-            break :blk std.io.getStdOut();
+            break :blk std.fs.File.stdout();
         }
     };
+    defer out_file.close();
+
+    var file_writer = out_file.writer(&writer_buf);
 
     var tm = try lib.techmap.TechMap.init(allocator, chiptype, &netlist.value);
     defer tm.deinit();
@@ -95,7 +99,8 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     defer fmap.deinit();
     try gal.synthesize(&fmap);
 
-    try fmap.writeJed(out_writer, .{});
+    try fmap.writeJed(&file_writer.interface, .{});
+    try file_writer.interface.flush();
 }
 
 pub fn validateNetlist(verbose: bool, path: []const u8) !void {

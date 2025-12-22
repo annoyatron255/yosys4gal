@@ -215,13 +215,13 @@ test Net {
 
     for (tests) |t| {
         const net, const j = t;
-        var stream = std.io.fixedBufferStream(&buf);
+        var stream = std.Io.Writer.fixed(&buf);
+        var writer = json.Stringify{ .writer = &stream };
 
-        try json.stringify(net, .{}, stream.writer());
-        const serialized = stream.getWritten();
-        try testing.expectEqualStrings(j, serialized);
+        try writer.write(net);
+        try testing.expectEqualStrings(j, buf[0..stream.end]);
 
-        const roundtrip = try json.parseFromSlice(Net, alloc, serialized, .{});
+        const roundtrip = try json.parseFromSlice(Net, alloc, buf[0..stream.end], .{});
         defer roundtrip.deinit();
         try testing.expectEqual(net, roundtrip.value);
     }
@@ -546,7 +546,6 @@ fn testNetCellMap(alloc: Allocator) !void {
     const expected = top.cells.map.getPtr("$iopadmap$olmc_test.AND") orelse unreachable;
     const actual = net.cell;
     try testing.expectEqual(expected, actual);
-
 }
 
 test buildNetCellMap {
@@ -604,7 +603,9 @@ test buildNetPortMap {
 pub fn readNetlist(alloc: Allocator, path: []const u8) !json.Parsed(Netlist) {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
-    var reader = std.json.reader(alloc, file.reader());
+    var buf: [1024]u8 = undefined;
+    var freader = file.reader(&buf);
+    var reader = std.json.Reader.init(alloc, &freader.interface);
     defer reader.deinit();
     return try std.json.parseFromTokenSource(
         Netlist,
@@ -624,7 +625,6 @@ pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
 fn netlistAllocTest(alloc: Allocator) !void {
     const nl = try getExampleNetlist(alloc);
     defer nl.deinit();
-
 }
 
 test "Netlist Alloc" {

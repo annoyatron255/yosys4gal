@@ -156,7 +156,6 @@ test PinMap {
     }
 }
 
-
 fn allocTester(alloc: Allocator) !void {
     var pa = try PinMap.init(alloc, chip.ChipType.gal16v8);
     defer pa.deinit();

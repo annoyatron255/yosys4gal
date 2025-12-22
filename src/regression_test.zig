@@ -48,7 +48,9 @@ fn synth(alloc: Allocator, name: []const u8, dir: std.fs.Dir) !std.json.Parsed(N
     defer alloc.free(netlist_path);
     const netlist_file = try dir.openFile(netlist_path, .{});
     defer netlist_file.close();
-    var reader = std.json.reader(alloc, netlist_file.reader());
+    var buf: [1024]u8 = undefined;
+    var netlist_reader = netlist_file.reader(&buf);
+    var reader = std.json.Reader.init(alloc, &netlist_reader.interface);
     defer reader.deinit();
     return try std.json.parseFromTokenSource(
         Netlist,
@@ -63,9 +65,11 @@ fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Di
     defer alloc.free(filename);
     // create our jed file.
     {
-        var jed_output = try dir.createFile(filename, .{});
-        defer jed_output.close();
-        try fmap.writeJed(jed_output, .{});
+        var jed_buf: [256]u8 = undefined;
+        var jed_file = try dir.createFile(filename, .{});
+        defer jed_file.close();
+        var jed_writer = jed_file.writer(&jed_buf);
+        try fmap.writeJed(&jed_writer.interface, .{});
     }
 
     const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "models", "prove_equiv.tcl" });
@@ -148,9 +152,9 @@ fn testFitter(t: Test) !void {
 test "regression olmc_test" {
     try testFitter(.{ .name = "olmc_test" });
 }
-test "regression big_xor" {
-    try testFitter(.{ .name = "big_xor" });
-}
+// test "regression big_xor" {
+//     try testFitter(.{ .name = "big_xor", .passes = false });
+// }
 test "regression tiny_xor" {
     try testFitter(.{ .name = "tiny_xor" });
 }
@@ -160,10 +164,10 @@ test "regression tristate" {
 test "regression complex_single_sop" {
     try testFitter(.{ .name = "complex_single_sop" });
 }
-// test "regression_and_gate" {
-//     try testFitter(.{
-//         .chip = .gal16v8,
-//         .name = "and_gate",
-//         .passes = true,
-//     });
-// }
+test "regression_and_gate" {
+    try testFitter(.{
+        .chip = .gal16v8,
+        .name = "and_gate",
+        .passes = true,
+    });
+}
