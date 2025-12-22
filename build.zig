@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    var opts = std.Build.Step.Options.create(b);
+    var opts = b.addOptions();
     opts.addOption([]const u8, "version", version);
     lib_mod.addOptions("meta", opts);
 
@@ -69,6 +69,13 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
+    const exe_check = b.addExecutable(.{
+        .name = "mkjed",
+        .root_module = exe_mod,
+    });
+    const check = b.step("check", "Check if it compiles");
+    check.dependOn(&exe_check.step);
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -103,6 +110,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_mod,
         .filters = b.args orelse &.{},
     });
+    check.dependOn(&lib_unit_tests.step);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -110,6 +118,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
         .filters = b.args orelse &.{},
     });
+    check.dependOn(&exe_unit_tests.step);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

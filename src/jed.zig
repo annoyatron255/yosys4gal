@@ -71,14 +71,6 @@ const Checksum = struct {
 
 /// File checksum for jedec whole file.
 /// note that this is not related to the fuse checksum above
-fn file_checksum(data: []const u8) u16 {
-    var sum: u16 = 0;
-    for (data) |byte| {
-        sum = @addWithOverflow(sum, byte).@"0";
-    }
-    return sum;
-}
-
 const jedFileChecksum = struct {
     sum: u16 = 0,
     pub fn update(self: *jedFileChecksum, data: []const u8) void {
@@ -242,6 +234,7 @@ pub const FuseMap = struct {
     pub fn writeBin(self: FuseMap, output: *std.io.Writer) !void {
         // first, write the length as a 4-byte value.
         try output.writeInt(u32, @intCast(self.fuses.len), .big);
+        // split the fuses into byte chunks and add each one to the output.
         var count: u3 = 0;
         var byte: u8 = 0;
         for (self.fuses) |fuse| {
