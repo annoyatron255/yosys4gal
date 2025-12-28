@@ -158,9 +158,12 @@ test "regression olmc_test" {
 test "regression tiny_xor" {
     try testFitter(.{ .name = "tiny_xor" });
 }
-test "regression tristate" {
+test "tristate" {
     try testFitter(.{ .name = "tristate" });
 }
+// test "tristate gal22v10" {
+//     try testFitter(.{ .name = "tristate", .chip = .gal22v10 });
+// }
 test "regression complex_single_sop" {
     try testFitter(.{ .name = "complex_single_sop" });
 }

@@ -1,6 +1,6 @@
 //! Describes various Yosys cells that form a Verilog to GAL
-//! This portion of the code takes a netlist and binds it to the xv8 gal
-//! specification.
+//! This portion of the code reads the netlist and does pin mapping using the constraints.
+//! Finally it will map the cells to actual hardware fuses.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -101,7 +101,7 @@ test validate {
 // methods reach into the cell to extract information
 
 pub const OlmcCell = struct {
-    // FIXME: use this.
+    /// the ports that a sop should be on
     const SopPort = enum { A, E };
     ref: *yosys_netlist.Cell,
 
@@ -330,22 +330,22 @@ pub const TechMap = struct {
     }
     pub fn mapChip(self: *TechMap) !gal.GAL {
         var gal_instance = try gal.GAL.init(self.allocator, self.chip_type);
-        for (self.olmcs.items) |olmc| {
-            log.debug("OLMC = {any}", .{olmc});
-            const pin = olmc.getOutputPin(self);
+        for (self.olmcs.items) |olmc_cell| {
+            log.debug("OLMC cell= {any}", .{olmc_cell});
+            const pin = olmc_cell.getOutputPin(self);
             log.info("pin is {any}", .{pin});
             // using the pin, get the olmc index
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
             log.debug("index is {d}", .{olmc_idx});
             // using this, get the sop from the GAL representation
-            const sop_array = try gal_instance.getOrMakeSop(olmc_idx, !olmc.registered());
-            const sop_cell = olmc.getSopCell(.A, self).?;
+            const sop_array = try gal_instance.getOrMakeSop(olmc_idx, !olmc_cell.registered());
+            const sop_cell = olmc_cell.getSopCell(.A, self).?;
             try sop_cell.toArray(self, sop_array);
             // use this olmc to map to the chip olmc
-            gal_instance.olmcs[olmc_idx].comb = !olmc.registered();
-            gal_instance.olmcs[olmc_idx].active_high = !olmc.inverted();
+            gal_instance.olmcs[olmc_idx].comb = !olmc_cell.registered();
+            gal_instance.olmcs[olmc_idx].active_high = !olmc_cell.inverted();
             // finally check for tristate
-            if (olmc.getSopCell(.E, self)) |oe_sop| {
+            if (olmc_cell.getSopCell(.E, self)) |oe_sop| {
                 const oe_array = try gal_instance.getOETerm(olmc_idx);
 
                 try oe_sop.toArray(self, oe_array);
