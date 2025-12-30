@@ -16,21 +16,20 @@ const Net = yosys_netlist.Net;
 const Netlist = yosys_netlist.Netlist;
 const PinMap = @import("./pin_mapping.zig").PinMap;
 const Array2D = @import("./util/array2d.zig").Array2D;
-const BiMap = @import("./util/bimap.zig").BiMap;
 const builtin = @import("builtin");
 
 const log = if (builtin.is_test)
     // Downgrade `err` to `warn` for tests.
     // Zig fails any test that does `log.err`, but we want to test those code paths here.
     struct {
-        const base = std.log.scoped(.techmap_gal);
+        const base = std.log.scoped(.gal_techmap);
         const err = warn;
         const warn = base.warn;
         const info = base.info;
         const debug = base.debug;
     }
 else
-    std.log.scoped(.techmap_gal);
+    std.log.scoped(.gal_techmap);
 
 // Validation function that ensures that the netlist is using our techmap.
 /// One of the invariants we assume about the gal netlist is invalid.

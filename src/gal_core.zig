@@ -26,7 +26,7 @@ pub const SopTerm = Array2D(bool);
 /// term: a dedicated product term for this OLMC
 /// in: this OLMC is disabled and should always be an input.
 /// out: force this OLMC to always be an output
-/// global: special case of registered OLMC in 16v8: shared global pin
+/// global: special case of registered OLMC in 16v8: common dedicated pin
 pub const TristateMode = union(enum) {
     unknown,
     term: *SopTerm,
@@ -38,7 +38,7 @@ pub const TristateMode = union(enum) {
 /// Represents an OLMC instace with actual data.
 pub const OLMC = struct {
     /// the spec backing this OLMC. contains info for the fuse locations.
-    spec: *const chipinfo.OlmcSpec,
+    spec: *const chipinfo.OlmcSpec = undefined,
     /// The rows for the OLMC terms. Supports mixed-size rows (22v10)
     output: ?*SopTerm = null,
 
@@ -63,68 +63,87 @@ pub const OLMC = struct {
 
     /// Write this OLMC to the fusemap using the assigned spec.
     /// the OLMC must be finalized.
-    pub fn write(self: *const OLMC, fmap: *FuseMap, product_size: usize, global_registered_oe: bool) void {
+    pub fn write(self: *const OLMC, fmap: *FuseMap, product_size: usize, registered_global_oe: bool) !void {
         // do nothing if no output.
         // TODO: should we still write tristates?
-        if (!self.output) return;
+        if (self.output == null) return;
         assert(self.tristate != .unknown);
         const base = self.spec.sop_fuses.@"0";
-        var offset: usize = 0;
+        assert(base < fmap.qf);
+        // by default, we assume that the first term is a tristate term.
+        var offset: usize = product_size;
         switch (self.tristate) {
             .global => {
                 // the chip is 16v8 and this SOP is registered.
-                assert(!self.comb and global_registered_oe);
-                fmap.setSlice(self.spec.sop_fuses.@"0", self.output.?);
+                assert(!self.comb and registered_global_oe);
+                // in this rare case, our offset is 0.
+                offset = 0;
             },
             .term => |term| {
                 // we are using a term.
                 assert(term.data.items.len == product_size);
                 assert(term.rows == 1);
-                fmap.setSlice(base, term);
-                offset += product_size;
+                try fmap.setSlice(base, term.data.items);
             },
-            .in => {},
+            .in => {
+                for (0..product_size) |i| {
+                    try fmap.set(base + i, false);
+                }
+            },
+            .out => {
+                for (0..product_size) |i| {
+                    try fmap.set(base + i, true);
+                }
+            },
+            .unknown => unreachable,
         }
+        const out = &self.output.?.data.items;
+        const max_size = self.spec.sop_fuses.@"1";
+        assert(out.len + offset < max_size);
+        try fmap.setSlice(base + offset, out.*);
+        // set the xor/other
+        try fmap.set(self.spec.s0, self.active_high);
+        try fmap.set(self.spec.s1, self.comb);
+
     }
 };
 
 /// represents the active state of a gal.
 pub const GAL = struct {
     const Self = @This();
+    const ExtraFuse = struct { idx: usize, val: bool };
     arena: ArenaAllocator,
     chip: ChipType,
     olmcs: []OLMC,
     pt: ?[]bool = null,
-    syn: bool,
-    ac0: bool,
+    extra_fuses: []ExtraFuse = &.{},
 
     /// Create a GAL representation of the given chip.
     pub fn init(allocator: Allocator, chip: ChipType) !GAL {
         var arena = ArenaAllocator.init(allocator);
         const spec = chip.getSpec();
         const olmcs = try arena.allocator().alloc(OLMC, spec.olmcs.len);
-        for (spec.olmcs, 0..) |olmc_spec, idx| {
-            olmcs[idx] = .{ .spec = &olmc_spec };
+        for (spec.olmcs, 0..) |*olmc_spec, idx| {
+            olmcs[idx] = .{ .spec = olmc_spec };
         }
 
         var result: GAL = .{
             .arena = arena,
             .chip = chip,
             .olmcs = olmcs,
-            .ac0 = false,
-            .syn = false,
         };
         // use registered mode on both chips
         switch (chip) {
-            // .gal22v10 => {
-            //     // do nothing
-            // },
+            .gal22v10 => {},
             .gal16v8 => {
                 const pt: []bool = try result.arena.allocator().alloc(bool, 64);
                 @memset(pt, true);
                 result.pt = pt;
-                result.ac0 = true;
-                result.syn = false;
+                // syn=false, ac0=true for 16v8 to be registered mode
+                // TODO: move this into the chip spec.
+                result.extra_fuses = try result.arena.allocator().alloc(ExtraFuse, 2);
+                result.extra_fuses[0] = .{ .idx = 2192, .val = false };
+                result.extra_fuses[1] = .{ .idx = 2193, .val = true };
             },
         }
         // allocate ptd even though we don't use it.
@@ -133,6 +152,23 @@ pub const GAL = struct {
 
     pub fn deinit(self: *GAL) void {
         self.arena.deinit();
+    }
+
+    /// helper to initialize all of the remaining tristate to global/out
+    fn setRemainingTristate(self: *GAL) void {
+        const spec = self.chip.getSpec();
+        for (self.olmcs) |*olmc| {
+            if (olmc.tristate == .unknown) {
+                // registered and we have a dedicated pin for registered OE
+                if (!olmc.comb and spec.registered_global_oe) {
+                    olmc.tristate = .global;
+                } else if (olmc.output != null) {
+                    olmc.tristate = .out;
+                } else {
+                    olmc.tristate = .in;
+                }
+            }
+        }
     }
 
     /// Returns the SOP for a given olmc. When first called for an OLMC,
@@ -151,7 +187,7 @@ pub const GAL = struct {
         // it doesn't exist, allocate a new one on our arena.
         olmc.comb = comb;
         const newsop: *SopTerm = try self.arena.allocator().create(SopTerm);
-        const rows: usize = if (comb) 7 else 8;
+        const rows: usize = olmc.spec.term_size(spec.num_cols, comb or !spec.registered_global_oe);
         newsop.* = try SopTerm.initFilled(self.arena.allocator(), rows, spec.num_cols, false);
         olmc.output = newsop;
         return newsop;
@@ -198,87 +234,24 @@ pub const GAL = struct {
     }
 
     pub fn synthesize(self: *GAL, fmap: *FuseMap) !void {
+        self.setRemainingTristate();
         const spec = self.chip.getSpec();
         assert(fmap.qf == spec.fusemap_size);
 
         // start with the output fuse maps.
-        for (self.olmcs, 0..) |olmc, idx| {
-            const olmc_spec = spec.olmcs[idx];
-            var base: usize = olmc_spec.sop_fuses.@"0";
-            var tristate = false;
-            // if we're a combinational olmc, OR we're a gal22v10
-            // and have local tristate in registered mode, we have
-            // to do this.
-            // handle the tristate row
-            if (olmc.comb or !spec.registered_global_oe) {
-                // tristate row. write one if it exists
-                // blank it otherwise.
-                // bump the base out.
-                switch (olmc.tristate) {
-                    .term => |t| {
-
-                    }
-                }
-                if (olmc.tristate) |tri| {
-                    assert(olmc.output != null);
-                    assert(tri.data.items.len == spec.num_cols);
-                    assert(tri.rows == 1);
-                    assert(tri.cols == spec.num_cols);
-                    try fmap.setSlice(base, tri.data.items);
-                } else {
-                    // set all fuses in this row to true, which always works.
-                    for (0..spec.num_cols) |i| {
-                        try fmap.set(base + i, true);
-                    }
-                }
-                // bump the base fuse addr.
-                base += spec.num_cols;
-                // we used tristate
-                tristate = true;
-            } else {
-                // we're a gal16v8 in registered mode, we shouldn't have
-                // a tristate block and should instead be global
-                assert(olmc.tristate == .global);
-            }
-
-            if (olmc.output) |out| {
-                // test that the output fits
-                const maxsize = olmc_spec.term_size(spec.num_cols, tristate);
-                assert(out.rows <= maxsize);
-                try fmap.setSlice(base, out.data.items);
-                base += out.data.items.len;
-            }
-        }
-        // in 16v8, it's then olmc xors,
-        // user signature,
-        // ac1, ptd, syn, ac0.
-        // write olmc xors.
-        var base: usize = spec.num_cols * spec.num_rows;
         for (self.olmcs) |olmc| {
-            try fmap.set(base, olmc.active_high);
-            base += 1;
+            try olmc.write(fmap, spec.num_cols, spec.registered_global_oe);
         }
-        {
-            const data = &[_]bool{false} ** 64;
-            try fmap.setSlice(base, data);
-            base += data.len;
-        }
-        for (self.olmcs) |olmc| {
-            try fmap.set(base, olmc.comb);
-            base += 1;
-        }
+
         if (self.pt) |ptd| {
+            assert(spec.ptd != null);
+            const base = spec.ptd.?.@"0";
             try fmap.setSlice(base, ptd);
-            base += ptd.len;
-        } else {
-            // we don't support this case yet, 22v10
-            unreachable;
         }
 
-        try fmap.set(base, self.syn);
-        base += 1;
-        try fmap.set(base, self.ac0);
-        base += 1;
+        for (self.extra_fuses) |efuse| {
+            try fmap.set(efuse.idx, efuse.val);
+        }
     }
 };
 
@@ -296,6 +269,7 @@ test "gal olmc comb" {
     // we should be able to make an oe term.
     const oe: *SopTerm = try gal.getOETerm(0);
     try testing.expectEqual(sop.cols, oe.cols);
+    try testing.expectEqual(sop.cols, spec.num_cols);
     var fusemap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fusemap.deinit();
     try gal.synthesize(&fusemap);

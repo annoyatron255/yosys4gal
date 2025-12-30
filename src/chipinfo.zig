@@ -12,19 +12,19 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 pub const ChipType = enum {
     const Self = @This();
     gal16v8,
-    // gal22v10,
+    gal22v10,
 
     pub fn getSpec(self: Self) *const Spec {
         return switch (self) {
             .gal16v8 => &GAL16V8Spec,
-            // .gal22v10 => &GAL16V8Spec,
+            .gal22v10 => &GAL16V8Spec,
         };
     }
 };
 
 pub const Pin = enum(u32) { _ };
 
-/// Simple struct declaring a range of fuses
+/// Simple struct declaring a range of fuses (base, len)
 pub const FuseBlock = struct { usize, usize };
 /// details of where the OLMC lies in the fuse map, as well as what pin it goes to.
 pub const OlmcSpec = struct {
@@ -40,7 +40,7 @@ pub const OlmcSpec = struct {
     /// Compute how many rows this OLMC can have for output. takes the row size from the chip spec,
     /// and a boolean to indicate if the first row is reserved for the tristate term.
     pub fn term_size(self: *const OlmcSpec, row_len: usize, uses_tristate: bool) usize {
-        var len = self.sop_fuses.@"1" - self.sop_fuses.@"0";
+        var len = self.sop_fuses.@"1";
         if (uses_tristate) {
             len -= row_len;
         }
@@ -81,8 +81,12 @@ pub const Spec = struct {
     /// mainly for 22v10.
     registered_global_oe: bool,
     /// the location of any product term disable fuses, if present.
-    ptd: ?FuseBlock,
+    ptd: ?FuseBlock = null,
 
+    /// location of the AR term
+    ar: ?FuseBlock = null,
+    /// location of the SP term
+    sp: ?FuseBlock = null,
     /// creates a bit set with the valid pins set to 1.
     pub fn makeValidPinSet(self: Self, allocator: Allocator) !DynamicBitSetUnmanaged {
         var bs = try DynamicBitSetUnmanaged.initEmpty(allocator, self.num_pins);
@@ -147,8 +151,8 @@ fn validate(spec: Spec) !void {
         };
 
         try testing.expect(is_valid);
+        try testing.expect(olmc.sop_fuses.@"0" < spec.fusemap_size);
     }
-
 }
 
 /// Registered-mode GAL16V8.
@@ -178,33 +182,69 @@ pub const GAL16V8Spec = Spec{
     },
     .olmcs = &.{
         OlmcSpec{ .pin = @enumFromInt(19), .s0 = 2048, .s1 = 2120, .sop_fuses = .{ 0, 256 } },
-        OlmcSpec{ .pin = @enumFromInt(18), .s0 = 2049, .s1 = 2121, .sop_fuses = .{ 256, 512 } },
-        OlmcSpec{ .pin = @enumFromInt(17), .s0 = 2050, .s1 = 2122, .sop_fuses = .{ 512, 768 } },
-        OlmcSpec{ .pin = @enumFromInt(16), .s0 = 2051, .s1 = 2123, .sop_fuses = .{ 768, 1024 } },
-        OlmcSpec{ .pin = @enumFromInt(15), .s0 = 2052, .s1 = 2124, .sop_fuses = .{ 1024, 1280 } },
-        OlmcSpec{ .pin = @enumFromInt(14), .s0 = 2053, .s1 = 2125, .sop_fuses = .{ 1280, 1536 } },
-        OlmcSpec{ .pin = @enumFromInt(13), .s0 = 2054, .s1 = 2126, .sop_fuses = .{ 1536, 1792 } },
-        OlmcSpec{ .pin = @enumFromInt(12), .s0 = 2055, .s1 = 2127, .sop_fuses = .{ 1792, 2048 } },
+        OlmcSpec{ .pin = @enumFromInt(18), .s0 = 2049, .s1 = 2121, .sop_fuses = .{ 256, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(17), .s0 = 2050, .s1 = 2122, .sop_fuses = .{ 512, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(16), .s0 = 2051, .s1 = 2123, .sop_fuses = .{ 768, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(15), .s0 = 2052, .s1 = 2124, .sop_fuses = .{ 1024, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(14), .s0 = 2053, .s1 = 2125, .sop_fuses = .{ 1280, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(13), .s0 = 2054, .s1 = 2126, .sop_fuses = .{ 1536, 256 } },
+        OlmcSpec{ .pin = @enumFromInt(12), .s0 = 2055, .s1 = 2127, .sop_fuses = .{ 1792, 256 } },
     },
     .registered_global_oe = true,
-    .ptd = .{ 2128, 2191 },
+    .ptd = .{ 2128, 64 },
 };
 
 test "gal16v8" {
     try validate(GAL16V8Spec);
 }
-//
-// pub const GAL22V10Spec = Spec{
-//     .num_cols = 44,
-//     // 120 main + 2 (ar/sp) + 10 tristate
-//     .num_rows = 132,
-//     .fusemap_size = 5892,
-//     .num_pins = 24,
-//     .valid_pins = @ptrCast(&[_]u32{ 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23 }),
-//     .pin_to_col = &.{ null, 0, 4, 8, 12, 16, 20, 24, 28, null, null, 30, 26, 22, 18, 14, 10, 6, 2, null },
-//     .pins = &.{.{ @enumFromInt(2), 3 }},
-//     .olmc_row = &.{ 1, 10, 21, 34, 49, 66, 83, 98, 111, 122 },
-//     .olmc_row_sizes = &.{ 8, 10, 12, 14, 16, 16, 14, 12, 10, 8 },
-//     .registered_global_oe = false,
-//     .ptd = null,
-// };
+test "gal22v10" {
+    try validate(GAL22V10Spec);
+}
+
+pub const GAL22V10Spec = Spec{
+    .num_cols = 44,
+    // 120 main + 2 (ar/sp) + 10 tristate
+    .num_rows = 132,
+    .fusemap_size = 5892,
+    .num_pins = 24,
+    .pins = &.{
+        .{ @enumFromInt(1), 0 }, // unlike 16v8, the clock pin is also a valid input.
+        .{ @enumFromInt(2), 4 },
+        .{ @enumFromInt(3), 8 },
+        .{ @enumFromInt(4), 12 },
+        .{ @enumFromInt(5), 16 },
+        .{ @enumFromInt(6), 20 },
+        .{ @enumFromInt(7), 24 },
+        .{ @enumFromInt(8), 28 },
+        .{ @enumFromInt(9), 32 },
+        .{ @enumFromInt(10), 36 },
+        .{ @enumFromInt(11), 40 },
+        .{ @enumFromInt(13), 42 },
+        .{ @enumFromInt(14), 38 },
+        .{ @enumFromInt(15), 34 },
+        .{ @enumFromInt(16), 30 },
+        .{ @enumFromInt(17), 26 },
+        .{ @enumFromInt(18), 22 },
+        .{ @enumFromInt(19), 18 },
+        .{ @enumFromInt(20), 14 },
+        .{ @enumFromInt(21), 10 },
+        .{ @enumFromInt(22), 6 },
+        .{ @enumFromInt(23), 2 },
+    },
+
+    .olmcs = &.{
+        OlmcSpec{ .pin = @enumFromInt(23), .s0 = 5808, .s1 = 5809, .sop_fuses = .{ 44, 9 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(22), .s0 = 5810, .s1 = 5811, .sop_fuses = .{ 440, 11 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(21), .s0 = 5812, .s1 = 5813, .sop_fuses = .{ 924, 13 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(20), .s0 = 5814, .s1 = 5815, .sop_fuses = .{ 1496, 15 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(19), .s0 = 5816, .s1 = 5817, .sop_fuses = .{ 2156, 17 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(18), .s0 = 5818, .s1 = 5819, .sop_fuses = .{ 2904, 17 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(17), .s0 = 5820, .s1 = 5821, .sop_fuses = .{ 3652, 15 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(16), .s0 = 5822, .s1 = 5823, .sop_fuses = .{ 4312, 13 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(15), .s0 = 5824, .s1 = 5825, .sop_fuses = .{ 4884, 11 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(14), .s0 = 5826, .s1 = 5827, .sop_fuses = .{ 5368, 9 * 44 } },
+    },
+    .registered_global_oe = false,
+    .ar = .{ 0, 44 },
+    .sp = .{ 5764, 44 },
+};

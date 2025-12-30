@@ -70,6 +70,8 @@ fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Di
         defer jed_file.close();
         var jed_writer = jed_file.writer(&jed_buf);
         try fmap.writeJed(&jed_writer.interface, .{});
+        try jed_writer.interface.flush();
+
     }
 
     const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "models", "prove_equiv.tcl" });

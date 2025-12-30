@@ -11,7 +11,7 @@ pub const techmap = @import("./gal_techmap.zig");
 pub const array2d = @import("./util/array2d.zig");
 pub const info = @import("./chipinfo.zig");
 
-test "main" {
+test {
     @import("std").testing.refAllDecls(@This());
 }
 test {
