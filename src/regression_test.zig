@@ -92,7 +92,7 @@ fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Di
     var proc = std.process.Child.init(&args, alloc);
     proc.cwd_dir = dir;
     proc.stdout_behavior = .Ignore;
-    proc.stderr_behavior = .Ignore;
+    proc.stderr_behavior = .Inherit;
 
     try proc.spawn();
 
