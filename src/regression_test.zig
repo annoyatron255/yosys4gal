@@ -154,28 +154,38 @@ fn testFitter(t: Test) !void {
     // try testing.checkAllAllocationFailures(alloc, testFitterImpl, .{t});
     try testFitterImpl(alloc, t);
 }
-test "regression olmc_test" {
-    try testFitter(.{ .name = "olmc_test" });
+test "gal16v8_olmc_test" {
+    try testFitter(.{ .name = "olmc_test", .chip = .gal16v8 });
 }
-// test "regression big_xor" {
-//     try testFitter(.{ .name = "big_xor", .passes = false });
-// }
-test "regression tiny_xor" {
-    try testFitter(.{ .name = "tiny_xor" });
+test "gal16v8_tiny_xor" {
+    try testFitter(.{ .name = "tiny_xor", .chip = .gal16v8 });
 }
-test "tristate" {
-    try testFitter(.{ .name = "tristate" });
+test "gal16v8_tristate" {
+    try testFitter(.{ .name = "tristate", .chip = .gal16v8 });
 }
-// test "tristate gal22v10" {
-//     try testFitter(.{ .name = "tristate", .chip = .gal22v10 });
-// }
-test "regression complex_single_sop" {
-    try testFitter(.{ .name = "complex_single_sop" });
+test "gal16v8_complex_single_sop" {
+    try testFitter(.{ .name = "complex_single_sop", .chip = .gal16v8 });
 }
-test "regression_and_gate" {
-    try testFitter(.{
-        .chip = .gal16v8,
-        .name = "and_gate",
-        .passes = true,
-    });
+test "gal16v8_and_gate" {
+    try testFitter(.{ .name = "and_gate", .chip = .gal16v8 });
+}
+
+
+test "gal22v10_olmc_test" {
+    try testFitter(.{ .name = "olmc_test", .chip = .gal22v10 });
+}
+test "gal22v10_big_xor" {
+    try testFitter(.{ .name = "big_xor", .chip = .gal22v10 });
+}
+test "gal22v10_tiny_xor" {
+    try testFitter(.{ .name = "tiny_xor", .chip = .gal22v10 });
+}
+test "gal22v10_tristate" {
+    try testFitter(.{ .name = "tristate", .chip = .gal22v10 });
+}
+test "gal22v10_complex_single_sop" {
+    try testFitter(.{ .name = "complex_single_sop", .chip = .gal22v10 });
+}
+test "gal22v10_and_gate" {
+    try testFitter(.{ .name = "and_gate", .chip = .gal22v10 });
 }

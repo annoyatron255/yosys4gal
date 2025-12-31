@@ -2,5 +2,5 @@ set_io a 2
 set_io b 3
 set_io c 4
 set_io d 5
-set_io x 12
-set_io y 13
+set_io x 15
+set_io y 14
