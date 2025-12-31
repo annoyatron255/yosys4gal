@@ -330,12 +330,9 @@ pub const TechMap = struct {
     pub fn mapChip(self: *TechMap) !gal.GAL {
         var gal_instance = try gal.GAL.init(self.allocator, self.chip_type);
         for (self.olmcs.items) |olmc_cell| {
-            log.debug("OLMC cell= {any}", .{olmc_cell});
             const pin = olmc_cell.getOutputPin(self);
-            log.info("pin is {any}", .{pin});
             // using the pin, get the olmc index
             const olmc_idx = self.chip_type.getSpec().getOlmcIdx(pin).?;
-            log.debug("index is {d}", .{olmc_idx});
             // using this, get the sop from the GAL representation
             const sop_array = try gal_instance.getOrMakeSop(olmc_idx, !olmc_cell.registered());
             const sop_cell = olmc_cell.getSopCell(.A, self).?;

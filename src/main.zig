@@ -23,7 +23,7 @@ const CLIArgs = union(enum) {
             netlist: []const u8,
             constraints: ?[]const u8 = null,
             output: ?[]const u8 = null,
-        }
+        },
     },
     validate: struct {
         binary: bool = false,
@@ -97,7 +97,14 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     defer fmap.deinit();
     try gal.synthesize(&fmap);
 
-    try fmap.writeJed(&file_writer.interface, .{});
+    const comment = try std.fmt.allocPrint(allocator,
+        \\chip: {s}
+        \\source: {s}
+        \\yosys: {s}
+        \\
+    , .{ @tagName(chiptype), netlist_path, netlist.value.creator});
+
+    try fmap.writeJed(&file_writer.interface, .{ .comment = comment });
     try file_writer.interface.flush();
 }
 
