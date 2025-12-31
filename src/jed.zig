@@ -304,7 +304,8 @@ test "writeJed" {
 
 test "jedutil valid jed" {
     const alloc = testing.allocator;
-    var fmap = try FuseMap.init(alloc, 2194, 20, false);
+    const spec = &chipinfo.GAL16V8Spec;
+    var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fmap.deinit();
 
     try fmap.set(768, true);
@@ -312,11 +313,21 @@ test "jedutil valid jed" {
 }
 test "jedutil valid bin" {
     const alloc = testing.allocator;
-    var fmap = try FuseMap.init(alloc, 2194, 20, false);
+    const spec = &chipinfo.GAL16V8Spec;
+    var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fmap.deinit();
 
     try fmap.set(768, true);
     try testJedutil(alloc, fmap, .gal16v8, .bin);
+}
+test "jedutil valid bin gal22v10" {
+    const alloc = testing.allocator;
+    const spec = &chipinfo.GAL22V10Spec;
+    var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
+    defer fmap.deinit();
+
+    try fmap.set(768, true);
+    try testJedutil(alloc, fmap, .gal22v10, .bin);
 }
 
 pub const JedMode = enum {
@@ -345,7 +356,7 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipT
         try writer.interface.flush();
     }
 
-    // invoke jedutil -view output.jed gal16v8
+    // invoke jedutil -view output.jed <chiptype>
     const args = [_][]const u8{ "jedutil", "-view", file, @tagName(chip) };
     var proc = std.process.Child.init(&args, alloc);
     proc.cwd_dir = tmp.dir;

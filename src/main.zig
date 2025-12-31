@@ -46,7 +46,7 @@ pub fn main() !void {
         },
         .build => |b| {
             try build(
-                .gal16v8,
+                b.chiptype,
                 b.positional.netlist,
                 b.positional.constraints,
                 b.positional.output,
