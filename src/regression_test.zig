@@ -11,6 +11,7 @@ const pcf = @import("./pcf.zig");
 const TechMap = @import("./gal_techmap.zig").TechMap;
 const jed = @import("./jed.zig");
 const FuseMap = @import("./jed.zig").FuseMap;
+const meta = @import("meta");
 
 /// From a testing directory, you can get back to the cwd using this.
 const tmp_to_cwd = "../../../";
@@ -71,7 +72,6 @@ fn equivalence(alloc: Allocator, name: []const u8, fmap: FuseMap, dir: std.fs.Di
         var jed_writer = jed_file.writer(&jed_buf);
         try fmap.writeJed(&jed_writer.interface, .{});
         try jed_writer.interface.flush();
-
     }
 
     const path_to_script = try std.fs.path.join(alloc, &[_][]const u8{ tmp_to_cwd, "models", "prove_equiv.tcl" });
@@ -147,6 +147,9 @@ fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
 }
 
 fn testFitter(t: Test) !void {
+    if (!meta.run_regression) {
+        return error.SkipZigTest;
+    }
     const alloc = testing.allocator;
     // try testing.checkAllAllocationFailures(alloc, testFitterImpl, .{t});
     try testFitterImpl(alloc, t);

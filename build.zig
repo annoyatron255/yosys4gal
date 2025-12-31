@@ -28,8 +28,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const run_regression = b.option(bool, "run-regression", "Run slow regression tests") orelse false;
     var opts = b.addOptions();
     opts.addOption([]const u8, "version", version);
+    // option to skip large regression tests
+    opts.addOption(bool, "run_regression", run_regression);
+
     lib_mod.addOptions("meta", opts);
 
     // We will also create a module for our other entry point, 'main.zig'.
@@ -110,6 +114,7 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_mod,
         .filters = b.args orelse &.{},
     });
+
     check.dependOn(&lib_unit_tests.step);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
