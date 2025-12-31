@@ -99,7 +99,7 @@ pub const OLMC = struct {
         }
         const out = &self.output.?.data.items;
         const max_size = self.spec.sop_fuses.@"1";
-        assert(out.len + offset < max_size);
+        assert(out.len + offset <= max_size);
         try fmap.setSlice(base + offset, out.*);
         // set the xor/other
         try fmap.set(self.spec.s0, self.active_high);
