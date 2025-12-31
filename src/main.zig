@@ -18,33 +18,31 @@ const CLIArgs = union(enum) {
     build: struct {
         binary: bool = false,
         // add this back when we support 22v10
-        // chiptype: lib.info.ChipType = .gal16v8,
+        chiptype: lib.info.ChipType = .gal16v8,
         positional: struct {
             netlist: []const u8,
             constraints: ?[]const u8 = null,
             output: ?[]const u8 = null,
-        },
+        }
     },
     validate: struct {
-        verbose: bool = false,
-        positional: struct {
-            file: []const u8,
-        },
+        binary: bool = false,
     },
 
     pub const help =
         \\ mkjed build [--binary] [--chiptype=<type>] <netlist> [constraints] [output]
         \\ mkjed validate [--verbose] <file>
+        \\ supported chip types are gal16v8 (default) or gal22v10
         \\
     ;
 };
 
 pub fn main() !void {
     var args = std.process.args();
-    const cli_args = flags.parse(&args, CLIArgs);
+    const cli_args = try flags.parse(CLIArgs, &args);
     switch (cli_args) {
-        .validate => |v| {
-            try validateNetlist(v.verbose, v.positional.file);
+        .validate => {
+            try validateNetlist(true, "hi.txt");
         },
         .build => |b| {
             try build(
