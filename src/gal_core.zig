@@ -86,11 +86,13 @@ pub const OLMC = struct {
                 try fmap.setSlice(base, term.data.items);
             },
             .in => {
+                // OE should always be zero, so blank it.
                 for (0..product_size) |i| {
                     try fmap.set(base + i, false);
                 }
             },
             .out => {
+                // OE term should always be 1, so we set everything to true.
                 for (0..product_size) |i| {
                     try fmap.set(base + i, true);
                 }

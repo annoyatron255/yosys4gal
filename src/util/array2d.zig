@@ -12,11 +12,11 @@ pub const Order = enum { row, column };
 
 /// A dynamically sized 2D array.
 /// TODO: make bools more memory efficient.
+/// TODO: don't hold allocator.
 pub fn Array2D(comptime T: type) type {
     return struct {
         const DataArray = std.ArrayListUnmanaged(T);
         const Self = @This();
-        allocator: Allocator,
         /// Underlying data representation
         data: DataArray,
         /// current number of rows.
@@ -24,17 +24,11 @@ pub fn Array2D(comptime T: type) type {
         /// current number of columns
         cols: usize = 0,
 
-        /// Create an empty, unsized matrix.
-        pub fn init(allocator: Allocator) Self {
-            return .{
-                .allocator = allocator,
-                .data = .empty,
-            };
-        }
+        pub const init: Self = .{ .data = .empty };
         /// Create an array that is already allocated for the correct size, but doesn't have
         pub fn initSize(allocator: Allocator, rows: usize, cols: usize) !Self {
-            var self = init(allocator);
-            try self.resize(rows, cols);
+            var self = init;
+            try self.resize(allocator, rows, cols);
             return self;
         }
 
@@ -50,21 +44,20 @@ pub fn Array2D(comptime T: type) type {
             // use the incoming allocator, since we want them to be able to manage it.
             const items_copy = try self.data.clone(allocator);
             return .{
-                .allocator = allocator,
                 .data = items_copy,
                 .rows = self.rows,
                 .cols = self.cols,
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.data.deinit(self.allocator);
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            self.data.deinit(allocator);
         }
 
-        pub fn resize(self: *Self, rows: usize, cols: usize) !void {
+        pub fn resize(self: *Self, allocator: Allocator, rows: usize, cols: usize) !void {
             self.rows = rows;
             self.cols = cols;
-            try self.data.resize(self.allocator, rows * cols);
+            try self.data.resize(allocator, rows * cols);
         }
 
         pub fn fill(self: *Self, value: T) void {
@@ -101,8 +94,8 @@ test Array2D {
     const IntArray = Array2D(i32);
     // init
     {
-        var arr = IntArray.init(alloc);
-        defer arr.deinit();
+        var arr = IntArray.init;
+        defer arr.deinit(alloc);
 
         try testing.expect(arr.rows == 0);
         try testing.expect(arr.cols == 0);
@@ -111,7 +104,7 @@ test Array2D {
     // initsize
     {
         var arr = try IntArray.initSize(alloc, 3, 4);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         try testing.expect(arr.rows == 3);
         try testing.expect(arr.cols == 4);
@@ -120,10 +113,10 @@ test Array2D {
     // clone
     {
         var original = try IntArray.initFilled(alloc, 2, 2, 10);
-        defer original.deinit();
+        defer original.deinit(alloc);
 
         var cloned = try original.clone(alloc);
-        defer cloned.deinit();
+        defer cloned.deinit(alloc);
 
         try testing.expect(cloned.rows == original.rows);
         try testing.expect(cloned.cols == original.cols);
@@ -141,23 +134,23 @@ test Array2D {
     }
     // resize
     {
-        var arr = IntArray.init(alloc);
-        defer arr.deinit();
+        var arr = IntArray.init;
+        defer arr.deinit(alloc);
 
         // Initial resize
-        try arr.resize(2, 3);
+        try arr.resize(alloc, 2, 3);
         try testing.expect(arr.rows == 2);
         try testing.expect(arr.cols == 3);
         try testing.expect(arr.data.items.len == 6);
 
         // Resize to larger
-        try arr.resize(4, 5);
+        try arr.resize(alloc, 4, 5);
         try testing.expect(arr.rows == 4);
         try testing.expect(arr.cols == 5);
         try testing.expect(arr.data.items.len == 20);
 
         // Resize to smaller
-        try arr.resize(1, 2);
+        try arr.resize(alloc, 1, 2);
         try testing.expect(arr.rows == 1);
         try testing.expect(arr.cols == 2);
         try testing.expect(arr.data.items.len == 2);
@@ -165,7 +158,7 @@ test Array2D {
     // fill
     {
         var arr = try IntArray.initSize(alloc, 3, 3);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         arr.fill(7);
 
@@ -183,7 +176,7 @@ test Array2D {
     // get/set
     {
         var arr = try IntArray.initSize(alloc, 3, 4);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         // Set values at different positions
         arr.set(0, 0, 1);
@@ -200,7 +193,7 @@ test Array2D {
     // getptr
     {
         var arr = try IntArray.initFilled(alloc, 2, 2, 0);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         // Modify through pointer
         const ptr = arr.getPtr(1, 1);
@@ -217,7 +210,7 @@ test Array2D {
     {
         const BoolArray = Array2D(bool);
         var arr = try BoolArray.initFilled(alloc, 2, 2, true);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         try testing.expect(arr.get(0, 0) == true);
         arr.set(1, 1, false);
@@ -227,7 +220,7 @@ test Array2D {
     {
         const FloatArray = Array2D(f32);
         var arr = try FloatArray.initSize(alloc, 2, 2);
-        defer arr.deinit();
+        defer arr.deinit(alloc);
 
         arr.set(0, 0, 3.14);
         try testing.expect(arr.get(0, 0) == 3.14);
@@ -239,7 +232,7 @@ test "Array2D - getSlice" {
     const IntArray = Array2D(i32);
 
     var arr = try IntArray.initSize(alloc, 3, 4);
-    defer arr.deinit();
+    defer arr.deinit(alloc);
 
     // Fill with identifiable pattern
     for (0..arr.rows) |row| {

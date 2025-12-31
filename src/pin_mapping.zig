@@ -72,8 +72,7 @@ pub const PinMap = struct {
         self.unused_set.deinit(self.allocator);
     }
 
-    /// perform validation on the invariants. Is a no-op in ReleaseFast
-    /// or ReleaseSmall.
+    /// perform validation on the invariants.
     fn validate(self: Self) void {
         assert(self.input_set.subsetOf(self.unused_set));
         assert(self.output_set.subsetOf(self.unused_set));
