@@ -61,6 +61,15 @@ pub const OLMC = struct {
         self.output = sop;
     }
 
+    /// determine if this OLMC should have feedback flipped on gal22v10.
+    /// NOTE: only use this on gal22v10!
+    pub fn needs_flip(self: *const OLMC) bool {
+        if (!self.comb and self.active_high) {
+            return true;
+        }
+        return false;
+    }
+
     /// Write this OLMC to the fusemap using the assigned spec.
     /// the OLMC must be finalized.
     pub fn write(self: *const OLMC, fmap: *FuseMap, product_size: usize, registered_global_oe: bool) !void {
@@ -103,12 +112,17 @@ pub const OLMC = struct {
         const max_size = self.spec.sop_fuses.@"1";
         assert(out.len + offset <= max_size);
         try fmap.setSlice(base + offset, out.*);
-        // set the xor/other
+        // set the xor/mode
         try fmap.set(self.spec.s0, self.active_high);
         try fmap.set(self.spec.s1, self.comb);
-
     }
 };
+// indicates if this term pair (fuse map) is actually set to be useful
+// 00 -> don'tcare, 11 -> don'tcare but makes the produce always true.
+fn is_term(orig: []const bool) bool {
+    return std.mem.eql(bool, orig, &.{ false, true }) or
+        std.mem.eql(bool, orig, &.{ true, false });
+}
 
 /// represents the active state of a gal.
 pub const GAL = struct {
@@ -223,26 +237,33 @@ pub const GAL = struct {
         }
     }
 
-    // special case handler for gal22v10
-    fn needs_flip(self: *GAL, olmc_idx: usize) bool {
-        if (self.chip != .gal22v10) {
-            return false;
-        }
-        const olmc = &self.olmcs[olmc_idx];
-        if (!olmc.comb and olmc.active_high) {
-            return true;
-        }
-        return false;
-    }
-
     pub fn synthesize(self: *GAL, fmap: *FuseMap) !void {
         self.setRemainingTristate();
         const spec = self.chip.getSpec();
         assert(fmap.qf == spec.fusemap_size);
 
-        // start with the output fuse maps.
         for (self.olmcs) |olmc| {
             try olmc.write(fmap, spec.num_cols, spec.registered_global_oe);
+        }
+        // flip terms that are connected to OLMC feedback on registered + active high OLMcs
+        if (self.chip == .gal22v10) {
+            for (self.olmcs) |olmc| {
+                if (olmc.needs_flip()) {
+                    std.log.debug("flipping feedback @ pin {d}", .{@intFromEnum(olmc.spec.pin)});
+                    const col = spec.getPinCol(olmc.spec.pin);
+                    // invert every term that uses this pin.
+                    // what this means is that 01 <-> 10,
+                    // but 11 and 00 stay the same.
+                    for (0..spec.num_rows) |row| {
+                        const idx = row * spec.num_cols + col;
+                        const orig = fmap.fuses[idx .. idx + 1];
+                        if (is_term(orig)) {
+                            fmap.fuses[idx] = !fmap.fuses[idx];
+                            fmap.fuses[idx + 1] = !fmap.fuses[idx + 1];
+                        }
+                    }
+                }
+            }
         }
 
         if (self.pt) |ptd| {

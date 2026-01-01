@@ -195,7 +195,7 @@ pub const SopCell = struct {
         const table = self.ref.getProp([]const u8, .param, "TABLE").?;
         const inputs = self.ref.connections.map.get("A").?;
         assert(depth <= out.rows);
-        assert(width <= out.cols / 2);
+        assert(width <= @divExact(out.cols, 2));
         // set the entire row to 1 first - then clear bits.
         for (0..depth) |row| {
             for (0..out.cols) |i| {
@@ -208,7 +208,9 @@ pub const SopCell = struct {
         // then go through each product term with that input,
         // and set the rows based on table
         for (inputs, 0..) |input, idx| {
+            // find the pin that this net is on.
             const pin = getSopInputPin(input, tm);
+            // now use that pin to get the column of this net.
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
             for (0..depth) |row| {
