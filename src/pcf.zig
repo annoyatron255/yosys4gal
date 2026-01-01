@@ -86,7 +86,7 @@ test parseArg {
 
 /// PCF file statement. consists of a command and then arguments.
 const PcfCmd = union(enum) {
-    set_io: struct { name: []const u8, net: u32 },
+    set_io: struct { name: []const u8, pin: u32 },
     set_clk: []const u8,
     // set_voltage: struct { []const u8, u32 },
 
@@ -168,9 +168,10 @@ pub const PinConstraints = struct {
                 errdefer self.allocator.free(name);
                 const gop = try self.constraints.getOrPut(self.allocator, name);
                 if (gop.found_existing) {
+                    std.log.err("pin collision net={s} pin={d}", .{args.name, args.pin});
                     return PcfError.PinCollision;
                 } else {
-                    gop.value_ptr.* = args.net;
+                    gop.value_ptr.* = args.pin;
                 }
             },
             .set_clk => |clk_name| {

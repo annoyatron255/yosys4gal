@@ -14,6 +14,17 @@ const yosys_netlist = @import("./yosys_netlist.zig");
 const BiMap = @import("./util/bimap.zig").BiMap;
 const chip = @import("./chipinfo.zig");
 
+const PinAssignment = union(enum) {
+    invalid, // this pin cannot be bound to a net.
+    in: yosys_netlist.Net,
+    out: yosys_netlist.Net,
+};
+
+const PinMode = enum {
+    io,
+    input
+};
+
 /// Maps design nets to chip pins.
 /// When given a chip, it tracks which pins have been bound and which haven't.
 /// A useful tool when doing fitting.

@@ -156,6 +156,7 @@ module olmc (
 		reg_out <= out;
 	end
 
+	// NOTE: the feedback is inverted if we are registered and ACTIVE HIGH.
 	assign feedback = reg_fuse ? !out : !reg_out ^ xor_fuse;
 
 	assign io = reg_fuse ? (one_sop ? !out : 1'bz) : // Combinational

@@ -249,7 +249,7 @@ pub const GAL = struct {
         if (self.chip == .gal22v10) {
             for (self.olmcs) |olmc| {
                 if (olmc.needs_flip()) {
-                    std.log.debug("flipping feedback @ pin {d}", .{@intFromEnum(olmc.spec.pin)});
+                    std.log.info("flipping feedback @ pin={d}", .{@intFromEnum(olmc.spec.pin)});
                     const col = spec.getPinCol(olmc.spec.pin);
                     // invert every term that uses this pin.
                     // what this means is that 01 <-> 10,

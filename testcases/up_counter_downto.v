@@ -1,7 +1,7 @@
 module test (
 	input clk,
 
-	output reg [6:0] counter
+	output reg [3:0] counter
 );
 
 always @ (posedge clk) begin

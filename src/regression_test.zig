@@ -169,6 +169,9 @@ test "gal16v8_complex_single_sop" {
 test "gal16v8_and_gate" {
     try testFitter(.{ .name = "and_gate", .chip = .gal16v8 });
 }
+test "gal16v8_up_counter_downto" {
+    try testFitter(.{ .name = "up_counter_downto", .chip = .gal16v8 });
+}
 
 
 test "gal22v10_olmc_test" {
@@ -188,4 +191,7 @@ test "gal22v10_complex_single_sop" {
 }
 test "gal22v10_and_gate" {
     try testFitter(.{ .name = "and_gate", .chip = .gal22v10 });
+}
+test "gal22v10_up_counter_downto" {
+    try testFitter(.{ .name = "up_counter_downto", .chip = .gal22v10 });
 }
