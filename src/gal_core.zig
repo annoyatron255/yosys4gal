@@ -256,7 +256,7 @@ pub const GAL = struct {
                     // but 11 and 00 stay the same.
                     for (0..spec.num_rows) |row| {
                         const idx = row * spec.num_cols + col;
-                        const orig = fmap.fuses[idx .. idx + 1];
+                        const orig = fmap.fuses[idx .. idx + 2];
                         if (is_term(orig)) {
                             fmap.fuses[idx] = !fmap.fuses[idx];
                             fmap.fuses[idx + 1] = !fmap.fuses[idx + 1];

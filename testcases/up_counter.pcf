@@ -1,6 +1,8 @@
-set_clk clk
 set_io clk 1
-set_io counter[0] 14
-set_io counter[1] 15
-set_io counter[2] 16
-set_io counter[3] 17
+set_io counter[0] 19
+set_io counter[1] 20
+set_io counter[2] 14
+set_io counter[3] 15
+set_io counter[4] 16
+set_io counter[5] 17
+set_io counter[6] 18
