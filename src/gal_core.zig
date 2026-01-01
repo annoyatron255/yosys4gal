@@ -11,12 +11,27 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const builtin = @import("builtin");
 
 const Array2D = @import("util/array2d.zig").Array2D;
 const jed = @import("jed.zig");
 const FuseMap = jed.FuseMap;
 const chipinfo = @import("./chipinfo.zig");
 const ChipType = chipinfo.ChipType;
+
+
+const log = if (builtin.is_test)
+    // Downgrade `err` to `warn` for tests.
+    // Zig fails any test that does `log.err`, but we want to test those code paths here.
+    struct {
+        const base = std.log.scoped(.gal_core);
+        const err = warn;
+        const warn = base.warn;
+        const info = base.info;
+        const debug = base.debug;
+    }
+else
+    std.log.scoped(.gal_core);
 
 /// Represents a SOP element that feeds into an OLMC.
 pub const SopTerm = Array2D(bool);
@@ -175,6 +190,7 @@ pub const GAL = struct {
         const spec = self.chip.getSpec();
         for (self.olmcs) |*olmc| {
             if (olmc.tristate == .unknown) {
+                log.info("setting tristate on OLMC@pin={d}", .{olmc.spec.pin});
                 // registered and we have a dedicated pin for registered OE
                 if (!olmc.comb and spec.registered_global_oe) {
                     olmc.tristate = .global;
@@ -249,7 +265,7 @@ pub const GAL = struct {
         if (self.chip == .gal22v10) {
             for (self.olmcs) |olmc| {
                 if (olmc.needs_flip()) {
-                    std.log.info("flipping feedback @ pin={d}", .{@intFromEnum(olmc.spec.pin)});
+                    log.info("inverting feedback @ pin={d}", .{@intFromEnum(olmc.spec.pin)});
                     const col = spec.getPinCol(olmc.spec.pin);
                     // invert every term that uses this pin.
                     // what this means is that 01 <-> 10,
@@ -258,6 +274,7 @@ pub const GAL = struct {
                         const idx = row * spec.num_cols + col;
                         const orig = fmap.fuses[idx .. idx + 2];
                         if (is_term(orig)) {
+                            log.debug("flipping row={d} col={d}", .{row, col});
                             fmap.fuses[idx] = !fmap.fuses[idx];
                             fmap.fuses[idx + 1] = !fmap.fuses[idx + 1];
                         }

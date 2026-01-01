@@ -104,7 +104,7 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
         \\
     , .{ @tagName(chiptype), netlist_path, netlist.value.creator});
 
-    try fmap.writeJed(&file_writer.interface, .{ .comment = comment });
+    try fmap.writeJed(&file_writer.interface, .{ .comment = comment, .fuse_segment_size = chiptype.getSpec().num_cols });
     try file_writer.interface.flush();
 }
 
