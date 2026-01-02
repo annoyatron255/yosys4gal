@@ -168,7 +168,7 @@ pub const PinConstraints = struct {
                 errdefer self.allocator.free(name);
                 const gop = try self.constraints.getOrPut(self.allocator, name);
                 if (gop.found_existing) {
-                    std.log.err("pin collision net={s} pin={d}", .{args.name, args.pin});
+                    log.err("pin collision net={s} pin={d}", .{args.name, args.pin});
                     return PcfError.PinCollision;
                 } else {
                     gop.value_ptr.* = args.pin;

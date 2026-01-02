@@ -14,6 +14,7 @@ pub const ChipType = enum {
     gal16v8,
     gal22v10,
 
+    /// retrieve the details about the chip.
     pub fn getSpec(self: Self) *const Spec {
         return switch (self) {
             .gal16v8 => &GAL16V8Spec,

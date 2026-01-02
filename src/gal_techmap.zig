@@ -158,7 +158,7 @@ fn ctobool(char: u8) bool {
     return switch (char) {
         '0' => false,
         '1' => true,
-        else => unreachable,
+        else => @panic("unexpected character"),
     };
 }
 

@@ -3,13 +3,27 @@
 //! know the data structure of the cell types.
 
 const std = @import("std");
+const builtin = @import("builtin");
+
 const Allocator = std.mem.Allocator;
 const json = std.json;
-
 const testing = std.testing;
 const assert = std.debug.assert;
 
 const JsonStringMap = json.ArrayHashMap([]const u8);
+
+const log = if (builtin.is_test)
+    // Downgrade `err` to `warn` for tests.
+    // Zig fails any test that does `log.err`, but we want to test those code paths here.
+    struct {
+        const base = std.log.scoped(.yosys_netlist);
+        const err = warn;
+        const warn = base.warn;
+        const info = base.info;
+        const debug = base.debug;
+    }
+else
+    std.log.scoped(.yosys_netlist);
 
 // --------------------------------------------------------------------------------
 // String-to-int functions and tests
@@ -39,6 +53,7 @@ pub fn strtob(comptime T: type, str: []const u8) !T {
             result |= @as(T, 1) << @intCast(str.len - i - 1);
         } else if (c != '0') {
             // not 0 or 1, so error
+            log.err("unexpected character in bitstring: {c}", .{c});
             return error.InvalidChar;
         }
     }
@@ -147,7 +162,7 @@ test readProperty {
 // pointing to structures inside the Netlist.
 // --------------------------------------------------------------------------------
 
-/// Net type. In Yosys, nets are either a numeric value, or one of xz01
+/// Net type. In Yosys, nets are either a numeric value, or one of xz01 literals
 /// which means that the input is fixed to a global or don't care.
 pub const Net = union(enum) {
     /// "x" meaning we don't care about the value
@@ -503,7 +518,7 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
             const port_name = port.key_ptr.*;
             const port_nets = port.value_ptr.*;
             // lookup the cell
-            const dir = cell.port_directions.map.get(port_name) orelse unreachable;
+            const dir = cell.port_directions.map.get(port_name).?;
 
             const binding: NetCellMember = .{
                 .cell = cell,
@@ -513,8 +528,6 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
             for (port_nets) |net| {
                 if (net == .N) {
                     try map.append(net, binding);
-                } else {
-                    // TODO: error?
                 }
             }
         }
