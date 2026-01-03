@@ -14,7 +14,7 @@ const yosys_netlist = @import("./yosys_netlist.zig");
 
 const Net = yosys_netlist.Net;
 const Netlist = yosys_netlist.Netlist;
-const PinMap = @import("./pin_mapping.zig").PinMap;
+const PinMap = @import("./PinMap.zig");
 const Array2D = @import("./util/array2d.zig").Array2D;
 const builtin = @import("builtin");
 
@@ -130,7 +130,7 @@ pub const OlmcCell = struct {
     pub fn getOutputPin(self: OlmcCell, tm: *TechMap) chip.Pin {
         // get the output net
         const output_net = self.ref.connections.map.get("Y").?[0];
-        return tm.pinmap.bimap.getA(output_net).?;
+        return tm.pinmap.net_lookup(output_net).?;
     }
 
     pub fn registered(self: OlmcCell) bool {
@@ -163,7 +163,7 @@ fn ctobool(char: u8) bool {
 }
 
 fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
-    if (tm.pinmap.bimap.getA(input)) |pin| {
+    if (tm.pinmap.net_lookup(input)) |pin| {
         return pin;
     } else {
         // This happens when a SOP input net goes through a GAL_INPUT cell.
@@ -174,7 +174,7 @@ fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
                     assert(GALCell.fromString(netcell.cell.type).? == .Input);
                     // find the pin on the A side...
                     const inp_cell_A = netcell.cell.connections.map.get("A").?[0];
-                    break :blk tm.pinmap.bimap.getA(inp_cell_A).?;
+                    break :blk tm.pinmap.net_lookup(inp_cell_A).?;
                 }
             }
             @panic("Could not find Pin on Net");
@@ -188,16 +188,16 @@ pub const SopCell = struct {
     pub fn toArray(self: SopCell, tm: *TechMap, out: *gal.SopTerm) !void {
         // extract the params.
         // depth aka number of products
-        const depth = self.ref.getProp(u32, .param, "DEPTH").?;
+        const d = self.depth();
         // width
-        const width = self.ref.getProp(u32, .param, "WIDTH").?;
+        const w = self.width();
         // table is []const u8 still - could be huge.
         const table = self.ref.getProp([]const u8, .param, "TABLE").?;
         const inputs = self.ref.connections.map.get("A").?;
-        assert(depth <= out.rows);
-        assert(width <= @divExact(out.cols, 2));
+        assert(d <= out.rows);
+        assert(w <= @divExact(out.cols, 2));
         // set the entire row to 1 first - then clear bits.
-        for (0..depth) |row| {
+        for (0..d) |row| {
             for (0..out.cols) |i| {
                 out.set(row, i, true);
             }
@@ -213,32 +213,38 @@ pub const SopCell = struct {
             // now use that pin to get the column of this net.
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
-            for (0..depth) |row| {
+            for (0..d) |row| {
                 // the table is actually backwards from how we expect it.
                 const reverse_idx = inputs.len - 1 - idx;
                 // width * row -> put us in the correct product
                 // idx * 2 - select inside the product
-                const pos = (width * row * 2 + reverse_idx * 2);
+                const pos = (w * row * 2 + reverse_idx * 2);
 
                 out.set(row, col, !ctobool(table[pos]));
                 out.set(row, col + 1, !ctobool(table[pos + 1]));
             }
         }
     }
+    pub fn width(self: SopCell) u32 {
+        return self.ref.getProp(u32, .param, "WIDTH").?;
+    }
+    pub fn depth(self: SopCell) u32 {
+        return self.ref.getProp(u32, .param, "DEPTH").?;
+    }
     /// Create a SopCell from a given Cell. When in ReleaseSafe or Debug,
     /// will perform validation of the cell.
     pub fn init(cell: *const yosys_netlist.Cell) SopCell {
-        const depth = cell.getProp(u32, .param, "DEPTH");
-        const width = cell.getProp(u32, .param, "WIDTH");
+        const d = cell.getProp(u32, .param, "DEPTH");
+        const w = cell.getProp(u32, .param, "WIDTH");
         const table = cell.getProp([]const u8, .param, "TABLE");
         const inputs = cell.connections.map.get("A");
         // FIXME: replace with errors
-        assert(depth != null);
-        assert(width != null);
+        assert(d != null);
+        assert(w != null);
         assert(table != null);
         assert(inputs != null);
-        assert(width.? == inputs.?.len);
-        assert(table.?.len == width.? * depth.? * 2);
+        assert(w.? == inputs.?.len);
+        assert(table.?.len == w.? * d.? * 2);
         const output = cell.connections.map.get("Y");
         assert(output != null);
         assert(output.?.len == 1);
@@ -315,7 +321,8 @@ pub const TechMap = struct {
         }
     }
 
-    /// Bind the OLMCs to pins using a pinmap
+    /// Apply PCF constraints and then fit the remaining ports onto the chip based on
+    /// sizing rules.
     pub fn applyConstraints(self: *TechMap, constraints: pcf.PinConstraints) !void {
         const top = self.netlist.findTopModule();
         try bindPorts(self.allocator, self.chip_type, &self.pinmap, top.ports, constraints);
@@ -323,9 +330,9 @@ pub const TechMap = struct {
         for (self.olmcs.items) |olmc| {
             // get the output net, check for lack of pin, map.
             const output_net = olmc.ref.connections.map.get("Y").?[0];
-            if (self.pinmap.bimap.getA(output_net) == null) {
-                const candidate = self.pinmap.candidate(.output) orelse return TechmapError.PinNotFound;
-                try self.pinmap.bindNet(output_net, .inout, @intCast(candidate));
+            if (self.pinmap.net_lookup(output_net) == null) {
+                const candidate = self.pinmap.output_candidate(0) orelse return TechmapError.PinNotFound;
+                try self.pinmap.bind(output_net, .inout, candidate);
             }
         }
     }
@@ -358,7 +365,7 @@ pub const TechMap = struct {
         self.olmcs.deinit(self.allocator);
         self.sops.deinit(self.allocator);
         self.inputs.deinit(self.allocator);
-        self.pinmap.deinit();
+        self.pinmap.deinit(self.allocator);
     }
 };
 
@@ -390,8 +397,8 @@ fn bindSinglePort(
     pinmap: *PinMap,
 ) !void {
     if (constraints.get(port_name)) |pin| {
-        if (chip_type.getSpec().pinFromInt(pin) != null) {
-            try pinmap.bindNet(net, dir, pin);
+        if (chip_type.getSpec().pinFromInt(pin)) |p| {
+            try pinmap.bind(net, dir, p);
         } else {
             log.warn("Port {s} constrained to invalid pin {d}", .{
                 port_name,
@@ -424,6 +431,7 @@ fn bindPorts(
         const port = entry.value_ptr;
         if (constraints.clk_net) |clk_net| {
             if (std.mem.eql(u8, clk_net, port_name.*)) {
+                log.info("skipping clock net {s}", .{clk_net});
                 continue;
             }
         }
@@ -444,7 +452,7 @@ fn bindPorts(
         } else {
             // multi-bit port - split it up here
             for (port.bits, 0..) |net, idx| {
-                // construct the port[index].
+                // construct the port[index] net name
                 var buf: [100]u8 = undefined;
                 const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name.*, idx });
                 try bindSinglePort(
@@ -462,8 +470,15 @@ fn bindPorts(
     }
 
     for (deferred_ports.items) |dnet| {
-        const candidate = pinmap.candidate(dnet.dir) orelse return TechmapError.PinNotFound;
-        try pinmap.bindNet(dnet.net, dnet.dir, @intCast(candidate));
+        const candidate = blk: {
+            if (dnet.dir == .inout or dnet.dir == .output) {
+                // FIXME: correct size
+                break :blk pinmap.output_candidate(0);
+            } else {
+                break :blk pinmap.input_candidate();
+            }
+        } orelse return TechmapError.PinNotFound;
+        try pinmap.bind(dnet.net, dnet.dir, candidate);
     }
 }
 test bindPorts {
@@ -480,7 +495,7 @@ test bindPorts {
     try constraints.parseSlice(pcf_file);
 
     var pa = try PinMap.init(alloc, .gal16v8);
-    defer pa.deinit();
+    defer pa.deinit(alloc);
     const top = netlist.value.findTopModule();
     try bindPorts(alloc, .gal16v8, &pa, top.ports, constraints);
 }
