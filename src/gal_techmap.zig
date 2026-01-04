@@ -291,6 +291,7 @@ pub const TechMap = struct {
 
         return self;
     }
+
     /// internal function to split up the scope.
     fn populateArrays(self: *TechMap) !void {
         const top = self.netlist.findTopModule();
@@ -323,19 +324,72 @@ pub const TechMap = struct {
 
     /// Apply PCF constraints and then fit the remaining ports onto the chip based on
     /// sizing rules.
-    pub fn applyConstraints(self: *TechMap, constraints: pcf.PinConstraints) !void {
+    pub fn applyConstraints(self: *TechMap, constraints: *const pcf.PinConstraints) !void {
+        const spec = self.chip_type.getSpec();
         const top = self.netlist.findTopModule();
-        try bindPorts(self.allocator, self.chip_type, &self.pinmap, top.ports, constraints);
+        var deferred = std.ArrayList(DeferredPort).empty;
+        defer deferred.deinit(self.allocator);
+
+        var ports = top.ports.map.iterator();
+
+        while (ports.next()) |entry| {
+            const name = entry.key_ptr;
+            const port = entry.value_ptr;
+            if (constraints.clk_net) |clk| {
+                if (std.mem.eql(u8, clk, name.*)) {
+                    log.info("skipping clock {s}", .{clk});
+                    continue;
+                }
+            }
+            assert(port.bits.len > 0);
+            for (port.bits, 0..) |net, idx| {
+                var buf: [100]u8 = undefined;
+                const net_name = if (port.bits.len == 1)
+                    name.*
+                else
+                    try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ name.*, idx });
+                // try self.bindSinglePort(constraints, net_name, port.direction, net);
+                // if this port is constrained, try to assign it.
+                if (constraints.get(net_name)) |pin| {
+                    if (spec.pinFromInt(pin)) |p| {
+                        log.debug("binding net {s} to pin {d}", .{ net_name, pin });
+                        try self.pinmap.bind(net, port.direction, p);
+                    } else {
+                        log.warn("Port {s} constrained to invalid pin {d}", .{ net_name, pin });
+                    }
+                }
+            }
+        }
+
         // look for any remaining OLMCs that are not on a port.
         for (self.olmcs.items) |olmc| {
             // get the output net, check for lack of pin, map.
             const output_net = olmc.ref.connections.map.get("Y").?[0];
             if (self.pinmap.net_lookup(output_net) == null) {
-                const candidate = self.pinmap.output_candidate(0) orelse return TechmapError.PinNotFound;
-                try self.pinmap.bind(output_net, .inout, candidate);
+                const size = olmc.getSopCell(.A, self).?.depth();
+                try deferred.append(self.allocator, .{ .net = output_net, .dir = .inout, .size = size });
+            }
+        }
+
+        for (deferred.items) |dnet| {
+            const candidate = if (dnet.dir == .inout or dnet.dir == .output)
+                // FIXME: correct size
+                self.pinmap.output_candidate(dnet.size)
+            else
+                self.pinmap.input_candidate();
+
+            try self.pinmap.bind(dnet.net, dnet.dir, candidate orelse return TechmapError.PinNotFound);
+        }
+    }
+
+    fn bindSinglePort(self: *TechMap, constraints: *const pcf.PinConstraints, name: []const u8, dir: yosys_netlist.PortDirection, net: yosys_netlist.Net) !void {
+        if (constraints.get(name)) |pin| {
+            if (self.chip_type.getSpec().pinFromInt(pin)) |p| {
+                try self.pinmap.bind(net, dir, p);
             }
         }
     }
+
     pub fn mapChip(self: *TechMap) !gal.GAL {
         var gal_instance = try gal.GAL.init(self.allocator, self.chip_type);
         for (self.olmcs.items) |olmc_cell| {
@@ -367,6 +421,11 @@ pub const TechMap = struct {
         self.inputs.deinit(self.allocator);
         self.pinmap.deinit(self.allocator);
     }
+
+    /// Maps the nets to the pins.
+    /// Optionally takes a PCF constraint file to bind module's ports to
+    /// specific pins.
+    const DeferredPort = struct { net: Net, dir: yosys_netlist.PortDirection, size: usize };
 };
 
 test TechMap {
@@ -376,126 +435,4 @@ test TechMap {
     defer netlist.deinit();
     var tm = try TechMap.init(alloc, chip.ChipType.gal16v8, &netlist.value);
     defer tm.deinit();
-}
-
-/// Maps the nets to the pins.
-/// Optionally takes a PCF constraint file to bind module's ports to
-/// specific pins.
-const DeferredPort = struct {
-    net: Net,
-    dir: yosys_netlist.PortDirection,
-};
-
-fn bindSinglePort(
-    allocator: Allocator,
-    port_name: []const u8,
-    dir: yosys_netlist.PortDirection,
-    net: yosys_netlist.Net,
-    chip_type: chip.ChipType,
-    deferred_ports: *std.ArrayList(DeferredPort),
-    constraints: pcf.PinConstraints,
-    pinmap: *PinMap,
-) !void {
-    if (constraints.get(port_name)) |pin| {
-        if (chip_type.getSpec().pinFromInt(pin)) |p| {
-            try pinmap.bind(net, dir, p);
-        } else {
-            log.warn("Port {s} constrained to invalid pin {d}", .{
-                port_name,
-                pin,
-            });
-        }
-    } else {
-        try deferred_ports.append(allocator, .{ .dir = dir, .net = net });
-    }
-}
-
-/// bind the ports from the pcf file, and then bind the remaining ports.
-/// NOTE: this does not handle the raw OLMCs that are only used internally.
-/// Those are handled in applyConstraints as part of the pcf.
-fn bindPorts(
-    allocator: Allocator,
-    chip_type: chip.ChipType,
-    pinmap: *PinMap,
-    ports: std.json.ArrayHashMap(yosys_netlist.Port),
-    constraints: pcf.PinConstraints,
-) !void {
-    //TODO: make this public/common? I feel like this logic is pretty universal.
-    // ports that we need to assign later, after we're done with the PCF.
-    var deferred_ports = std.ArrayList(DeferredPort).empty;
-    defer deferred_ports.deinit(allocator);
-    // first pass - bind PCF constrained pins.
-    var port_iter = ports.map.iterator();
-    while (port_iter.next()) |entry| {
-        const port_name = entry.key_ptr;
-        const port = entry.value_ptr;
-        if (constraints.clk_net) |clk_net| {
-            if (std.mem.eql(u8, clk_net, port_name.*)) {
-                log.info("skipping clock net {s}", .{clk_net});
-                continue;
-            }
-        }
-        const dir = port.direction;
-        assert(port.bits.len > 0);
-        if (port.bits.len == 1) {
-            // single bit port, handle it directly.
-            try bindSinglePort(
-                allocator,
-                port_name.*,
-                dir,
-                port.bits[0],
-                chip_type,
-                &deferred_ports,
-                constraints,
-                pinmap,
-            );
-        } else {
-            // multi-bit port - split it up here
-            for (port.bits, 0..) |net, idx| {
-                // construct the port[index] net name
-                var buf: [100]u8 = undefined;
-                const fullname = try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ port_name.*, idx });
-                try bindSinglePort(
-                    allocator,
-                    fullname,
-                    dir,
-                    net,
-                    chip_type,
-                    &deferred_ports,
-                    constraints,
-                    pinmap,
-                );
-            }
-        }
-    }
-
-    for (deferred_ports.items) |dnet| {
-        const candidate = blk: {
-            if (dnet.dir == .inout or dnet.dir == .output) {
-                // FIXME: correct size
-                break :blk pinmap.output_candidate(0);
-            } else {
-                break :blk pinmap.input_candidate();
-            }
-        } orelse return TechmapError.PinNotFound;
-        try pinmap.bind(dnet.net, dnet.dir, candidate);
-    }
-}
-test bindPorts {
-    const alloc = testing.allocator;
-    // This is all netlist setup
-    const netlist = try yosys_netlist.getExampleNetlist(alloc);
-    defer netlist.deinit();
-
-    const pcf_path = "./testcases/olmc_test.pcf";
-    const pcf_file = try std.fs.cwd().readFileAlloc(alloc, pcf_path, 8192);
-    defer alloc.free(pcf_file);
-    var constraints = pcf.PinConstraints.init(alloc);
-    defer constraints.deinit();
-    try constraints.parseSlice(pcf_file);
-
-    var pa = try PinMap.init(alloc, .gal16v8);
-    defer pa.deinit(alloc);
-    const top = netlist.value.findTopModule();
-    try bindPorts(alloc, .gal16v8, &pa, top.ports, constraints);
 }

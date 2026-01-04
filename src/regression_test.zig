@@ -129,7 +129,7 @@ fn testFitterImpl(alloc: Allocator, t: Test) anyerror!void {
 
     var tm = try TechMap.init(alloc, t.chip, &netlist.value);
     defer tm.deinit();
-    try tm.applyConstraints(constraints);
+    try tm.applyConstraints(&constraints);
     // create the gal
     var gal = try tm.mapChip();
     defer gal.deinit();

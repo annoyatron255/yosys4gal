@@ -83,7 +83,7 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
 
     var tm = try lib.techmap.TechMap.init(allocator, chiptype, &netlist.value);
     defer tm.deinit();
-    try tm.applyConstraints(constraints);
+    try tm.applyConstraints(&constraints);
     // create the gal
     var gal = try tm.mapChip();
     defer gal.deinit();
