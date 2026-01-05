@@ -35,6 +35,7 @@ const PinInfo = struct {
     fn unused(self: *const PinInfo) bool {
         return self.assignment == null;
     }
+    /// true if unused and smaller than requested size and also can be output.
     fn fits_output(self: *const PinInfo, size: usize) bool {
         return self.unused() and self.size >= size and self.mode == .io;
     }
@@ -86,27 +87,20 @@ pub fn input_candidate(self: *const PinMap) ?chipinfo.Pin {
     }
 }
 
-
 /// find a candidate for an output of AT LEAST the given size. this
 /// will find the smallest non-assigned output.
 pub fn output_candidate(self: *const PinMap, size: usize) ?chipinfo.Pin {
-    var pin_idx: usize = undefined;
-    var candidate: ?PinInfo = null;
+    var pin_idx: ?usize = null;
+    var min_size: usize = std.math.maxInt(usize);
     for (self.pins, 0..) |p, idx| {
-        if (p) |pin| {
-            if (pin.fits_output(size)) {
-                if (candidate == null or candidate.?.size > pin.size) {
-                    candidate = pin;
-                    pin_idx = idx;
-                }
-            }
+        const pin = p orelse continue;
+        // if this pin fits, and is better than our current candidate.
+        if (pin.fits_output(size) and min_size > pin.size) {
+            pin_idx = idx;
+            min_size = pin.size;
         }
     }
-    if (candidate == null) {
-        return null;
-    } else {
-        return @enumFromInt(pin_idx);
-    }
+    return if (pin_idx) |idx| @enumFromInt(idx) else null;
 }
 /// bind the given net (with the drive direction) to the pin.
 pub fn bind(self: *PinMap, net: Net, dir: yosys_netlist.PortDirection, pin: chipinfo.Pin) Error!void {
@@ -159,7 +153,7 @@ pub fn deinit(self: *PinMap, allocator: std.mem.Allocator) void {
 test PinMap {
     const testing = std.testing;
     const alloc = testing.allocator;
-    var pa = try PinMap.init(alloc, chipinfo.ChipType.gal16v8);
+    var pa = try PinMap.init(alloc, chipinfo.ChipType.gal22v10);
     defer pa.deinit(alloc);
     try pa.bind(.{ .N = 1337 }, .input, @enumFromInt(2));
     try pa.bind(.{ .N = 1338 }, .output, @enumFromInt(16));
@@ -173,4 +167,15 @@ test PinMap {
         const collide = pa.bind(.{ .N = 1 }, .output, @enumFromInt(16));
         try testing.expectError(PinMap.Error.PinConsumed, collide);
     }
+    // get output candidate for a 16.
+    {
+        const expected: chipinfo.Pin = @enumFromInt(18);
+        try testing.expectEqual(expected, pa.output_candidate(16));
+    }
+    // get an output candidate for a 7 (should be an 8-depth SOP)
+    {
+        const expected: chipinfo.Pin = @enumFromInt(14);
+        try testing.expectEqual(expected, pa.output_candidate(8));
+    }
+
 }

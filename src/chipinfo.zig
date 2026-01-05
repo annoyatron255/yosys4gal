@@ -88,30 +88,8 @@ pub const Spec = struct {
     ar: ?FuseBlock = null,
     /// location of the SP term
     sp: ?FuseBlock = null,
-    /// creates a bit set with the valid pins set to 1.
-    pub fn makeValidPinSet(self: Self, allocator: Allocator) !DynamicBitSetUnmanaged {
-        var bs = try DynamicBitSetUnmanaged.initEmpty(allocator, self.num_pins);
 
-        for (self.pins) |p| {
-            bs.set(@intFromEnum(p.@"0"));
-        }
-        return bs;
-    }
-
-    /// Create a bit set with the OLMC output pins set to 1.
-    /// note that the *highest* bit is the 0th OLMC!
-    /// caller is responsible for cleanup.
-    pub fn makeOlmcPinSet(self: Self, allocator: Allocator) !DynamicBitSetUnmanaged {
-        var bs = try DynamicBitSetUnmanaged.initEmpty(allocator, self.num_pins);
-
-        for (self.olmcs) |o| {
-            bs.set(@intFromEnum(o.pin));
-        }
-        return bs;
-    }
-
-    /// internal lookup function for pins
-    /// pin must be valid!
+    /// Find the fuse map column for the pin
     pub fn getPinCol(self: Self, pin: Pin) u32 {
         for (self.pins) |candidate| {
             if (pin == candidate.@"0") {
@@ -202,8 +180,9 @@ test "gal22v10" {
     try validate(GAL22V10Spec);
 }
 
+const GAL22V10_COLUMNS = 44;
 pub const GAL22V10Spec = Spec{
-    .num_cols = 44,
+    .num_cols = GAL22V10_COLUMNS,
     // 120 main + 2 (ar/sp) + 10 tristate
     .num_rows = 132,
     .fusemap_size = 5892,
@@ -234,18 +213,18 @@ pub const GAL22V10Spec = Spec{
     },
 
     .olmcs = &.{
-        OlmcSpec{ .pin = @enumFromInt(23), .s0 = 5808, .s1 = 5809, .sop_fuses = .{ 44, 9 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(22), .s0 = 5810, .s1 = 5811, .sop_fuses = .{ 440, 11 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(21), .s0 = 5812, .s1 = 5813, .sop_fuses = .{ 924, 13 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(20), .s0 = 5814, .s1 = 5815, .sop_fuses = .{ 1496, 15 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(19), .s0 = 5816, .s1 = 5817, .sop_fuses = .{ 2156, 17 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(18), .s0 = 5818, .s1 = 5819, .sop_fuses = .{ 2904, 17 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(17), .s0 = 5820, .s1 = 5821, .sop_fuses = .{ 3652, 15 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(16), .s0 = 5822, .s1 = 5823, .sop_fuses = .{ 4312, 13 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(15), .s0 = 5824, .s1 = 5825, .sop_fuses = .{ 4884, 11 * 44 } },
-        OlmcSpec{ .pin = @enumFromInt(14), .s0 = 5826, .s1 = 5827, .sop_fuses = .{ 5368, 9 * 44 } },
+        OlmcSpec{ .pin = @enumFromInt(23), .s0 = 5808, .s1 = 5809, .sop_fuses = .{ 44, 9 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(22), .s0 = 5810, .s1 = 5811, .sop_fuses = .{ 440, 11 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(21), .s0 = 5812, .s1 = 5813, .sop_fuses = .{ 924, 13 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(20), .s0 = 5814, .s1 = 5815, .sop_fuses = .{ 1496, 15 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(19), .s0 = 5816, .s1 = 5817, .sop_fuses = .{ 2156, 17 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(18), .s0 = 5818, .s1 = 5819, .sop_fuses = .{ 2904, 17 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(17), .s0 = 5820, .s1 = 5821, .sop_fuses = .{ 3652, 15 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(16), .s0 = 5822, .s1 = 5823, .sop_fuses = .{ 4312, 13 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(15), .s0 = 5824, .s1 = 5825, .sop_fuses = .{ 4884, 11 * GAL22V10_COLUMNS } },
+        OlmcSpec{ .pin = @enumFromInt(14), .s0 = 5826, .s1 = 5827, .sop_fuses = .{ 5368, 9 * GAL22V10_COLUMNS } },
     },
     .registered_global_oe = false,
-    .ar = .{ 0, 44 },
-    .sp = .{ 5764, 44 },
+    .ar = .{ 0, GAL22V10_COLUMNS },
+    .sp = .{ 5764, GAL22V10_COLUMNS },
 };

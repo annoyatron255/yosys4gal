@@ -136,9 +136,11 @@ pub const OlmcCell = struct {
     pub fn registered(self: OlmcCell) bool {
         return self.ref.getProp(u8, .param, "REGISTERED").? > 0;
     }
+
     pub fn inverted(self: OlmcCell) bool {
         return self.ref.getProp(u8, .param, "INVERTED").? > 0;
     }
+
     pub fn format(self: *const OlmcCell, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (fmt.len != 0) {
             std.fmt.invalidFmtError(fmt, self);
@@ -162,6 +164,7 @@ fn ctobool(char: u8) bool {
     };
 }
 
+/// find the chip pin that drives this net. traversing GAL_INPUT.
 fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
     if (tm.pinmap.net_lookup(input)) |pin| {
         return pin;
@@ -225,12 +228,15 @@ pub const SopCell = struct {
             }
         }
     }
+
     pub fn width(self: SopCell) u32 {
         return self.ref.getProp(u32, .param, "WIDTH").?;
     }
+
     pub fn depth(self: SopCell) u32 {
         return self.ref.getProp(u32, .param, "DEPTH").?;
     }
+
     /// Create a SopCell from a given Cell. When in ReleaseSafe or Debug,
     /// will perform validation of the cell.
     pub fn init(cell: *const yosys_netlist.Cell) SopCell {
@@ -327,6 +333,7 @@ pub const TechMap = struct {
     pub fn applyConstraints(self: *TechMap, constraints: *const pcf.PinConstraints) !void {
         const spec = self.chip_type.getSpec();
         const top = self.netlist.findTopModule();
+        // save for later, assign based on sizing.
         var deferred = std.ArrayList(DeferredPort).empty;
         defer deferred.deinit(self.allocator);
 
@@ -348,8 +355,8 @@ pub const TechMap = struct {
                     name.*
                 else
                     try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ name.*, idx });
-                // try self.bindSinglePort(constraints, net_name, port.direction, net);
                 // if this port is constrained, try to assign it.
+                // otherwise it will get picked up later by the OLMC pass.
                 if (constraints.get(net_name)) |pin| {
                     if (spec.pinFromInt(pin)) |p| {
                         log.debug("binding net {s} to pin {d}", .{ net_name, pin });
@@ -357,36 +364,31 @@ pub const TechMap = struct {
                     } else {
                         log.warn("Port {s} constrained to invalid pin {d}", .{ net_name, pin });
                     }
+                } else if (port.direction == .input) {
+                    // output/inout will be picked up by OLMC pass below.
+                    try deferred.append(self.allocator, .{ .net = net, .dir = .input, .size = 0 });
                 }
             }
         }
 
-        // look for any remaining OLMCs that are not on a port.
+        // look for any remaining OLMCs that haven't been constrained.
         for (self.olmcs.items) |olmc| {
-            // get the output net, check for lack of pin, map.
+            // get the output net, check for lack of pin, and then add it to the deferred list.
             const output_net = olmc.ref.connections.map.get("Y").?[0];
             if (self.pinmap.net_lookup(output_net) == null) {
-                const size = olmc.getSopCell(.A, self).?.depth();
+                const size = if (olmc.getSopCell(.A, self)) |sop| sop.depth() else 0;
                 try deferred.append(self.allocator, .{ .net = output_net, .dir = .inout, .size = size });
             }
         }
+        // deduplicate the port list.
 
         for (deferred.items) |dnet| {
             const candidate = if (dnet.dir == .inout or dnet.dir == .output)
-                // FIXME: correct size
                 self.pinmap.output_candidate(dnet.size)
             else
                 self.pinmap.input_candidate();
 
             try self.pinmap.bind(dnet.net, dnet.dir, candidate orelse return TechmapError.PinNotFound);
-        }
-    }
-
-    fn bindSinglePort(self: *TechMap, constraints: *const pcf.PinConstraints, name: []const u8, dir: yosys_netlist.PortDirection, net: yosys_netlist.Net) !void {
-        if (constraints.get(name)) |pin| {
-            if (self.chip_type.getSpec().pinFromInt(pin)) |p| {
-                try self.pinmap.bind(net, dir, p);
-            }
         }
     }
 
@@ -435,4 +437,7 @@ test TechMap {
     defer netlist.deinit();
     var tm = try TechMap.init(alloc, chip.ChipType.gal16v8, &netlist.value);
     defer tm.deinit();
+    var constraints = pcf.PinConstraints.init(alloc);
+    defer constraints.deinit();
+    try tm.applyConstraints(&constraints);
 }
