@@ -351,18 +351,18 @@ pub const TechMap = struct {
             assert(port.bits.len > 0);
             for (port.bits, 0..) |net, idx| {
                 var buf: [100]u8 = undefined;
-                const net_name = if (port.bits.len == 1)
+                const port_name = if (port.bits.len == 1)
                     name.*
                 else
                     try std.fmt.bufPrint(&buf, "{s}[{d}]", .{ name.*, idx });
                 // if this port is constrained, try to assign it.
                 // otherwise it will get picked up later by the OLMC pass.
-                if (constraints.get(net_name)) |pin| {
+                if (constraints.get(port_name)) |pin| {
                     if (spec.pinFromInt(pin)) |p| {
-                        log.debug("binding net {s} to pin {d}", .{ net_name, pin });
+                        log.debug("binding port {s} to pin {d}", .{ port_name, pin });
                         try self.pinmap.bind(net, port.direction, p);
                     } else {
-                        log.warn("Port {s} constrained to invalid pin {d}", .{ net_name, pin });
+                        log.warn("Port {s} constrained to invalid pin {d}", .{ port_name, pin });
                     }
                 } else if (port.direction == .input) {
                     // output/inout will be picked up by OLMC pass below.
@@ -387,8 +387,14 @@ pub const TechMap = struct {
                 self.pinmap.output_candidate(dnet.size)
             else
                 self.pinmap.input_candidate();
+            if (candidate == null) {
+                log.err("unable to find candidate for {any} ({s})", .{ dnet.net, @tagName(dnet.dir) });
+                return TechmapError.PinNotFound;
+            }
 
-            try self.pinmap.bind(dnet.net, dnet.dir, candidate orelse return TechmapError.PinNotFound);
+            log.debug("deferred placement of {any} ({s}) to pin {d}", .{ dnet.net, @tagName(dnet.dir), candidate.? });
+
+            try self.pinmap.bind(dnet.net, dnet.dir, candidate.?);
         }
     }
 
