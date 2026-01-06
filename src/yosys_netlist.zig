@@ -410,33 +410,6 @@ pub const NetDetails = struct {
 // These exist to aid more complex tasks.
 // --------------------------------------------------------------------------------
 
-/// Net-to-Cell lookup table.
-/// give a net, get an array of ( port, *Cell ).
-/// Can be used to "dance" with cell traversal. Cell -> Net -> NetGraph list -> Cell
-/// Can also be used to simply see every cell that uses a given net.
-pub fn NetMap(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        const LookupTable = std.AutoHashMap(u32, T);
-        gpa: Allocator,
-        lookup: LookupTable,
-        pub fn init(allocator: Allocator) !Self {
-            return .{
-                .gpa = allocator,
-                .lookup = LookupTable.init(allocator),
-            };
-        }
-        pub fn deinit(self: *Self) void {
-            // cleanup the arraylists
-            var it = self.lookup.valueIterator();
-            while (it.next()) |val| {
-                val.deinit();
-            }
-            // cleanup the lookup
-            self.lookup.deinit();
-        }
-    };
-}
 
 /// Map a net to a list of objects, which typically contain information/references
 /// about elements in the netlist. T should be something like struct { cell: *const Cell }.
