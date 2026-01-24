@@ -1,6 +1,7 @@
 //! Describes various Yosys cells that form a Verilog to GAL
-//! This portion of the code reads the netlist and does pin mapping using the constraints.
-//! Finally it will map the cells to actual hardware fuses.
+//! This file handles the techmap details from the yosys netlist.
+//! Then it will map the cells into real hardware.
+//! Constraints are built/applied here.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -13,6 +14,7 @@ const pcf = @import("./pcf.zig");
 const yosys_netlist = @import("./yosys_netlist.zig");
 
 const Net = yosys_netlist.Net;
+const Cell = yosys_netlist.Cell;
 const Netlist = yosys_netlist.Netlist;
 const PinMap = @import("./PinMap.zig");
 const Array2D = @import("./util/array2d.zig").Array2D;
@@ -41,6 +43,15 @@ const TechmapError = error{
     InvalidPin,
     PinNotFound,
 };
+
+/// Helper function to convert TABLE characters to booleans.
+fn ctobool(char: u8) bool {
+    return switch (char) {
+        '0' => false,
+        '1' => true,
+        else => std.debug.panic("unexpected character {c}", .{char}),
+    };
+}
 
 const GALCell = enum {
     Olmc,
@@ -96,13 +107,12 @@ test validate {
     try validate(&netlist.value);
 }
 
-// all of these cells have a ref which points to their parent.
-// methods reach into the cell to extract information
-
+/// all of these cells have a ref which points to their parent.
+/// methods reach into the cell to extract information
 pub const OlmcCell = struct {
     /// the ports that a sop should be on
     const SopPort = enum { A, E };
-    ref: *yosys_netlist.Cell,
+    ref: *Cell,
 
     /// Returns the sop cell on the port, which is one of A or E
     pub fn getSopCell(self: OlmcCell, port: SopPort, tm: *TechMap) ?SopCell {
@@ -114,15 +124,10 @@ pub const OlmcCell = struct {
         }
         if (input != .N) return null;
         // search through the ncm to find the driver net. assert that it's a valid SOP.
-        const cells_on_net = tm.ncm.lookup.get(input.N).?.items;
-
-        for (cells_on_net) |cell| {
-            if (cell.direction == .output) {
-                assert(std.mem.eql(u8, cell.port, "Y"));
-                // found one - assert that it's a sop.
-                return SopCell.init(cell.cell);
-            }
+        if (tm.ncm.getFiltered(input, yosys_netlist.filters.netDriver)) |driver| {
+            return SopCell.init(driver.cell);
         }
+
         return null;
     }
 
@@ -141,10 +146,7 @@ pub const OlmcCell = struct {
         return self.ref.getProp(u8, .param, "INVERTED").? > 0;
     }
 
-    pub fn format(self: *const OlmcCell, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0) {
-            std.fmt.invalidFmtError(fmt, self);
-        }
+    pub fn format(self: *const OlmcCell, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const reg = self.registered();
         const inv = self.inverted();
         const output_net = self.ref.connections.map.get("Y").?[0];
@@ -153,16 +155,41 @@ pub const OlmcCell = struct {
     }
 };
 
-pub const InputCell = struct {
-    ref: *const yosys_netlist.Cell,
+pub const OlmcCell2 = struct {
+    ref: *Cell,
+    name: *[]const u8,
+    io_net: Net,
+    tristate: Net,
+    input: *Cell,
+    inverted: bool,
+    registered: bool,
+
+    pub fn init(cell: *Cell, name: *[]const u8) OlmcCell2 {
+        assert(GALCell.fromString(cell.type).? == .Olmc);
+
+        const inputs = cell.connections.map.get("A").?;
+        assert(inputs.len == 1);
+        const tristate = blk: {
+            const nets = cell.connections.map.get("E").?;
+            assert(nets.len == 1);
+            break :blk nets[0];
+        };
+        const registered = cell.getProp(u8, .param, "REGISTERED").? > 0;
+        const inverted = cell.getProp(u8, .param, "INVERTED").? > 0;
+
+        const io_net = cell.connections.map.get("Y").?[0];
+
+        return .{
+            .ref = cell,
+            .name = name,
+            .io_net = io_net,
+            .tristate = tristate,
+            .input = inputs[0],
+            .inverted = inverted,
+            .registered = registered,
+        };
+    }
 };
-fn ctobool(char: u8) bool {
-    return switch (char) {
-        '0' => false,
-        '1' => true,
-        else => @panic("unexpected character"),
-    };
-}
 
 /// find the chip pin that drives this net. traversing GAL_INPUT.
 fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
@@ -170,23 +197,16 @@ fn getSopInputPin(input: Net, tm: *TechMap) chip.Pin {
         return pin;
     } else {
         // This happens when a SOP input net goes through a GAL_INPUT cell.
-        const pin: chip.Pin = blk: {
-            for (tm.ncm.lookup.get(input.N).?.items) |netcell| {
-                if (netcell.direction == .output or netcell.direction == .inout) {
-                    assert(std.mem.eql(u8, netcell.port, "Y"));
-                    assert(GALCell.fromString(netcell.cell.type).? == .Input);
-                    // find the pin on the A side...
-                    const inp_cell_A = netcell.cell.connections.map.get("A").?[0];
-                    break :blk tm.pinmap.net_lookup(inp_cell_A).?;
-                }
-            }
-            @panic("Could not find Pin on Net");
-        };
-        return pin;
+        if (tm.ncm.getFiltered(input, yosys_netlist.filters.netDriver)) |driver| {
+            const backtrack = driver.cell.connections.map.get("A").?[0];
+            return tm.pinmap.net_lookup(backtrack).?;
+        }
+        std.debug.panic("Could not find pin on Net {any}", .{input});
     }
 }
+
 pub const SopCell = struct {
-    ref: *const yosys_netlist.Cell,
+    ref: *const Cell,
     /// Convert this SOP and place it on the given array2d.
     pub fn toArray(self: SopCell, tm: *TechMap, out: *gal.SopTerm) !void {
         // extract the params.
@@ -210,9 +230,9 @@ pub const SopCell = struct {
         // based on the pin compute the column we need to edit.
         // then go through each product term with that input,
         // and set the rows based on table
-        for (inputs, 0..) |input, idx| {
+        for (inputs, 0..) |input_net, idx| {
             // find the pin that this net is on.
-            const pin = getSopInputPin(input, tm);
+            const pin = getSopInputPin(input_net, tm);
             // now use that pin to get the column of this net.
             const col = tm.chip_type.getSpec().getPinCol(pin);
             // compute the table.
@@ -239,7 +259,7 @@ pub const SopCell = struct {
 
     /// Create a SopCell from a given Cell. When in ReleaseSafe or Debug,
     /// will perform validation of the cell.
-    pub fn init(cell: *const yosys_netlist.Cell) SopCell {
+    pub fn init(cell: *const Cell) SopCell {
         const d = cell.getProp(u32, .param, "DEPTH");
         const w = cell.getProp(u32, .param, "WIDTH");
         const table = cell.getProp([]const u8, .param, "TABLE");
@@ -265,8 +285,6 @@ pub const TechMap = struct {
     ncm: yosys_netlist.NetCellMap,
     chip_type: chip.ChipType,
     olmcs: std.ArrayListUnmanaged(OlmcCell) = .empty,
-    sops: std.ArrayListUnmanaged(SopCell) = .empty,
-    inputs: std.ArrayListUnmanaged(InputCell) = .empty,
     netlist: *const Netlist,
     pinmap: PinMap,
 
@@ -312,18 +330,11 @@ pub const TechMap = struct {
             const ctype = GALCell.fromString(cell.type) orelse return TechmapError.UnknownCellType;
 
             switch (ctype) {
-                .Input => {
-                    const input: InputCell = .{ .ref = cell };
-                    try self.inputs.append(self.allocator, input);
-                },
-                .Sop => {
-                    const sop: SopCell = .{ .ref = cell };
-                    try self.sops.append(self.allocator, sop);
-                },
                 .Olmc => {
                     const olmc: OlmcCell = .{ .ref = cell };
                     try self.olmcs.append(self.allocator, olmc);
                 },
+                else => {},
             }
         }
     }
@@ -365,6 +376,8 @@ pub const TechMap = struct {
                         log.warn("Port {s} constrained to invalid pin {d}", .{ port_name, pin });
                     }
                 } else if (port.direction == .input) {
+                    // any port that's unconstrained is added to the deferred list
+                    // but only if it's an input.
                     // output/inout will be picked up by OLMC pass below.
                     try deferred.append(self.allocator, .{ .net = net, .dir = .input, .size = 0 });
                 }
@@ -372,6 +385,7 @@ pub const TechMap = struct {
         }
 
         // look for any remaining OLMCs that haven't been constrained.
+        // this will also find OLMCs that are on a port but not constrained
         for (self.olmcs.items) |olmc| {
             // get the output net, check for lack of pin, and then add it to the deferred list.
             const output_net = olmc.ref.connections.map.get("Y").?[0];
@@ -425,8 +439,6 @@ pub const TechMap = struct {
         self.npm.deinit();
         self.ncm.deinit();
         self.olmcs.deinit(self.allocator);
-        self.sops.deinit(self.allocator);
-        self.inputs.deinit(self.allocator);
         self.pinmap.deinit(self.allocator);
     }
 

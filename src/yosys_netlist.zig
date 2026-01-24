@@ -453,7 +453,7 @@ pub fn NetMapMany(comptime T: type) type {
         }
         /// Searches a key array for a function matching the predicate.
         pub fn getFiltered(self: Self, key: Net, search: fn (v: T) bool) ?T {
-            if (self.lookup.get(key)) |list| {
+            if (self.lookup.get(key.N)) |list| {
                 for (list.items) |entry| {
                     if (search(entry)) {
                         return entry;
@@ -507,6 +507,14 @@ pub fn buildNetCellMap(allocator: Allocator, module: *const Module) !NetCellMap 
     }
     return map;
 }
+
+/// Predefined filters for the .getFiltered method
+pub const filters = struct {
+    /// Finds the singular driver of a net.
+    pub fn netDriver(cellInfo: NetCellMember) bool {
+        return cellInfo.direction != .input;
+    }
+};
 
 fn testNetCellMap(alloc: Allocator) !void {
     const netlist = try getExampleNetlist(alloc);
