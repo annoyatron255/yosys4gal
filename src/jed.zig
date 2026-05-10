@@ -164,11 +164,11 @@ pub const FuseMap = struct {
     }
 
     /// Write the fusemap in the jed format to the given output.
-    pub fn writeJed(self: FuseMap, output: *std.io.Writer, options: jedOptions) !void {
+    pub fn writeJed(self: FuseMap, output: *std.Io.Writer, options: jedOptions) !void {
         // internal write out buffer
         var buf: [1024]u8 = undefined;
         // we want a checksum of the written contents.
-        var hasher = std.io.Writer.Hashed(jedFileChecksum).init(output, &buf);
+        var hasher = std.Io.Writer.Hashed(jedFileChecksum).init(output, &buf);
         var writer = &hasher.writer;
 
         // start of file
@@ -231,7 +231,7 @@ pub const FuseMap = struct {
     /// Writes the binary output using jedutil's binary format.
     /// The format contains a u32 for the fuse count, and then
     /// bit-packed fuse bits. This is largely untested.
-    pub fn writeBin(self: FuseMap, output: *std.io.Writer) !void {
+    pub fn writeBin(self: FuseMap, output: *std.Io.Writer) !void {
         // first, write the length as a 4-byte value.
         try output.writeInt(u32, @intCast(self.fuses.len), .big);
         // split the fuses into byte chunks and add each one to the output.
@@ -287,7 +287,7 @@ test "writeJed" {
     defer fmap.deinit();
     try fmap.set(0, true);
 
-    var output = std.io.Writer.Allocating.init(alloc);
+    var output = std.Io.Writer.Allocating.init(alloc);
     defer output.deinit();
 
     try fmap.writeJed(&output.writer, .{});
@@ -304,30 +304,33 @@ test "writeJed" {
 
 test "jedutil valid jed" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const spec = &chipinfo.GAL16V8Spec;
     var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    try testJedutil(alloc, fmap, .gal16v8, .jed);
+    try testJedutil(alloc, io, fmap, .gal16v8, .jed);
 }
 test "jedutil valid bin" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const spec = &chipinfo.GAL16V8Spec;
     var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    try testJedutil(alloc, fmap, .gal16v8, .bin);
+    try testJedutil(alloc, io, fmap, .gal16v8, .bin);
 }
 test "jedutil valid bin gal22v10" {
     const alloc = testing.allocator;
+    const io = testing.io;
     const spec = &chipinfo.GAL22V10Spec;
     var fmap = try FuseMap.init(alloc, spec.fusemap_size, spec.num_pins, false);
     defer fmap.deinit();
 
     try fmap.set(768, true);
-    try testJedutil(alloc, fmap, .gal22v10, .bin);
+    try testJedutil(alloc, io, fmap, .gal22v10, .bin);
 }
 
 pub const JedMode = enum {
@@ -337,17 +340,17 @@ pub const JedMode = enum {
 
 /// Validate the fusemap with jedutil if present, skipping the test otherwise.
 /// Can only be called as part of a test
-pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipType, mode: JedMode) !void {
+pub fn testJedutil(alloc: std.mem.Allocator, io: std.Io, fmap: FuseMap, chip: chipinfo.ChipType, mode: JedMode) !void {
     const file = try std.fmt.allocPrint(alloc, "output.{s}", .{@tagName(mode)});
     defer alloc.free(file);
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     // create the jed file.
     {
-        var out = try tmp.dir.createFile(file, .{});
+        var out = try tmp.dir.createFile(io, file, .{});
         var buf: [1024]u8 = undefined;
-        var writer = out.writer(&buf);
-        defer out.close();
+        var writer = out.writer(io, &buf);
+        defer out.close(io);
 
         switch (mode) {
             .jed => try fmap.writeJed(&writer.interface, .{}),
@@ -358,24 +361,28 @@ pub fn testJedutil(alloc: std.mem.Allocator, fmap: FuseMap, chip: chipinfo.ChipT
 
     // invoke jedutil -view output.jed <chiptype>
     const args = [_][]const u8{ "jedutil", "-view", file, @tagName(chip) };
-    var proc = std.process.Child.init(&args, alloc);
-    proc.cwd_dir = tmp.dir;
-    proc.stdout_behavior = .Ignore;
-    proc.stderr_behavior = .Pipe;
-    try proc.spawn();
+    var proc = try std.process.spawn(io, .{
+        .argv = &args,
+        .cwd = .{ .dir = tmp.dir },
+        .stderr = .pipe,
+        .stdout = .pipe,
+    });
+    // catch |err| switch (err) {
+    //       error.FileNotFound => return error.SkipZigTest,
+    //      else => |other| return other,
+    //     };
     // assert that the stderr is empty
 
-    const output = try proc.stderr.?.readToEndAlloc(alloc, 1024);
-    defer alloc.free(output);
+    var output_reader = proc.stderr.?.reader(io, &.{});
 
-    const res = proc.wait() catch |err| switch (err) {
-        error.FileNotFound => return error.SkipZigTest,
-        else => |other| return other,
-    };
-    testing.expectEqual(0, output.len) catch |err| {
-        std.debug.print("unexpected jedutil output: {s}", .{output});
+    const output_content = try output_reader.interface.allocRemaining(alloc, .unlimited);
+    defer alloc.free(output_content);
+
+    const res = try proc.wait(io);
+    testing.expectEqual(0, output_content.len) catch |err| {
+        std.debug.print("unexpected jedutil output: {s}", .{output_content});
         return err;
     };
 
-    try testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, res);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, res);
 }

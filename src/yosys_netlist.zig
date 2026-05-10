@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const json = std.json;
 const testing = std.testing;
 const assert = std.debug.assert;
@@ -410,7 +411,6 @@ pub const NetDetails = struct {
 // These exist to aid more complex tasks.
 // --------------------------------------------------------------------------------
 
-
 /// Map a net to a list of objects, which typically contain information/references
 /// about elements in the netlist. T should be something like struct { cell: *const Cell }.
 /// If there's a guaranteed 1-1 mapping, use NetMap instead.
@@ -586,11 +586,11 @@ test buildNetPortMap {
 }
 
 /// Helper function to read a netlist from a file path.
-pub fn readNetlist(alloc: Allocator, path: []const u8) !json.Parsed(Netlist) {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+pub fn readNetlist(alloc: Allocator, io: Io, path: []const u8) !json.Parsed(Netlist) {
+    const file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
     var buf: [1024]u8 = undefined;
-    var freader = file.reader(&buf);
+    var freader = file.reader(io, &buf);
     var reader = std.json.Reader.init(alloc, &freader.interface);
     defer reader.deinit();
     return try std.json.parseFromTokenSource(
@@ -604,8 +604,9 @@ pub fn readNetlist(alloc: Allocator, path: []const u8) !json.Parsed(Netlist) {
 /// Testing function to get the example netlist.
 pub fn getExampleNetlist(alloc: Allocator) !json.Parsed(Netlist) {
     const example = "./output/synth_olmc_test.json";
+    const io = testing.io;
 
-    return readNetlist(alloc, example);
+    return readNetlist(alloc, io, example);
 }
 
 fn netlistAllocTest(alloc: Allocator) !void {

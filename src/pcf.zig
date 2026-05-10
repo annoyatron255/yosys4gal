@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const builtin = @import("builtin");
 const log = if (builtin.is_test)
     // Downgrade `err` to `warn` for tests.
@@ -168,7 +169,7 @@ pub const PinConstraints = struct {
                 errdefer self.allocator.free(name);
                 const gop = try self.constraints.getOrPut(self.allocator, name);
                 if (gop.found_existing) {
-                    log.err("pin collision net={s} pin={d}", .{args.name, args.pin});
+                    log.err("pin collision net={s} pin={d}", .{ args.name, args.pin });
                     return PcfError.PinCollision;
                 } else {
                     gop.value_ptr.* = args.pin;
@@ -246,26 +247,23 @@ test PinConstraints {
     try testing.expectError(PcfError.InvalidClock, pc.parseLine(set_clk));
 }
 
-fn pcfFileTest(alloc: Allocator) !void {
+test "PCF File Test" {
+    const testing = std.testing;
+    const io = testing.io;
+    const alloc = testing.allocator;
     const pcf_path = "./testcases/olmc_test.pcf";
-    var pc = try readPcf(alloc, pcf_path);
+    var pc = try readPcf(alloc, io, pcf_path);
     pc.deinit();
 }
 
-test "PCF File Test" {
-    const testing = std.testing;
-    const alloc = testing.allocator;
-    try pcfFileTest(alloc);
-}
-
 ///
-pub fn readPcf(allocator: Allocator, path: []const u8) !PinConstraints {
+pub fn readPcf(allocator: Allocator, io: Io, path: []const u8) !PinConstraints {
     var pc = PinConstraints.init(allocator);
     errdefer pc.deinit();
-    const pcf_file = try std.fs.cwd().openFile(path, .{});
-    defer pcf_file.close();
+    const pcf_file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer pcf_file.close(io);
     var buf: [1024]u8 = undefined;
-    var reader = pcf_file.reader(&buf);
+    var reader = pcf_file.reader(io, &buf);
     try pc.parseReader(&reader.interface);
 
     return pc;

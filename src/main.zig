@@ -4,6 +4,9 @@
 
 const std = @import("std");
 
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("mkjed_lib");
 const flags = @import("./util/flags.zig");
@@ -37,15 +40,17 @@ const CLIArgs = union(enum) {
     ;
 };
 
-pub fn main() !void {
-    var args = std.process.args();
+pub fn main(init: std.process.Init) !void {
+    var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
     const cli_args = try flags.parse(CLIArgs, &args);
     switch (cli_args) {
         .validate => {
-            try validateNetlist(true, "hi.txt");
+            try validateNetlist(init.gpa, init.io, "hi.txt");
         },
         .build => |b| {
             try build(
+                init.gpa,
+                init.io,
                 b.chiptype,
                 b.positional.netlist,
                 b.positional.constraints,
@@ -55,33 +60,37 @@ pub fn main() !void {
     }
 }
 
-pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[]const u8, output: ?[]const u8) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-
-    const netlist = try yosys_netlist.readNetlist(allocator, netlist_path);
+pub fn build(
+    alloc: Allocator,
+    io: Io,
+    chiptype: lib.info.ChipType,
+    netlist_path: []const u8,
+    pcf_path: ?[]const u8,
+    output: ?[]const u8,
+) !void {
+    const netlist = try yosys_netlist.readNetlist(alloc, io, netlist_path);
     defer netlist.deinit();
     var constraints: pcf.PinConstraints = blk: {
         if (pcf_path) |path| {
-            break :blk try pcf.readPcf(allocator, path);
+            break :blk try pcf.readPcf(alloc, io, path);
         }
-        break :blk pcf.PinConstraints.init(allocator);
+        break :blk pcf.PinConstraints.init(alloc);
     };
     defer constraints.deinit();
 
     var writer_buf: [1024]u8 = undefined;
-    var out_file: std.fs.File = blk: {
+    var out_file: Io.File = blk: {
         if (output) |out_path| {
-            break :blk try std.fs.cwd().createFile(out_path, .{});
+            break :blk try Io.Dir.cwd().createFile(io, out_path, .{});
         } else {
-            break :blk std.fs.File.stdout();
+            break :blk Io.File.stdout();
         }
     };
-    defer out_file.close();
+    defer out_file.close(io);
 
-    var file_writer = out_file.writer(&writer_buf);
+    var file_writer = out_file.writer(io, &writer_buf);
 
-    var tm = try lib.techmap.TechMap.init(allocator, chiptype, &netlist.value);
+    var tm = try lib.techmap.TechMap.init(alloc, chiptype, &netlist.value);
     defer tm.deinit();
     try tm.applyConstraints(&constraints);
     // create the gal
@@ -89,7 +98,7 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     defer gal.deinit();
     // create the fuse map and then synthesize.
     var fmap = try lib.jed.FuseMap.init(
-        allocator,
+        alloc,
         chiptype.getSpec().fusemap_size,
         chiptype.getSpec().num_pins,
         false,
@@ -97,21 +106,21 @@ pub fn build(chiptype: lib.info.ChipType, netlist_path: []const u8, pcf_path: ?[
     defer fmap.deinit();
     try gal.synthesize(&fmap);
 
-    const comment = try std.fmt.allocPrint(allocator,
+    const comment = try std.fmt.allocPrint(alloc,
         \\chip: {s}
         \\source: {s}
         \\yosys: {s}
         \\
-    , .{ @tagName(chiptype), netlist_path, netlist.value.creator});
+    , .{ @tagName(chiptype), netlist_path, netlist.value.creator });
 
-    try fmap.writeJed(&file_writer.interface, .{ .comment = comment, .fuse_segment_size = chiptype.getSpec().num_cols });
+    try fmap.writeJed(
+        &file_writer.interface,
+        .{ .comment = comment, .fuse_segment_size = chiptype.getSpec().num_cols },
+    );
     try file_writer.interface.flush();
 }
 
-pub fn validateNetlist(verbose: bool, path: []const u8) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    _ = verbose;
-    const netlist = try yosys_netlist.readNetlist(allocator, path);
+pub fn validateNetlist(alloc: Allocator, io: Io, path: []const u8) !void {
+    const netlist = try yosys_netlist.readNetlist(alloc, io, path);
     defer netlist.deinit();
 }
